@@ -1,0 +1,38 @@
+timezone: Asia/Jerusalem
+dry_run: true
+
+telegram:
+  session_name: gold_signal_bot
+  groups:
+    - name: group_a
+      chat_id: -2001216034
+      lot: 0.01
+    - name: TechnicalPips6273
+      username: TechnicalPips6273
+      lot: 0.01
+  admin_chat_id: 0
+
+trading:
+  symbol_override: ""
+  max_concurrent_signals: 1
+  breakeven_after_tp: 3
+  safety_delay_seconds: 5
+  safety_pips: 50
+  pip_size: 0.1
+  magic_number: 260908
+  deviation: 30
+  order_retries: 1
+
+broker:
+  # On a Windows VPS with MT5 installed, change to mt5_native and set dry_run: false
+  type: dry_run
+  common_files_dir: ""
+
+excel:
+  output_dir: reports
+  daily_digest_hour: 23
+  daily_digest_minute: 55
+
+paths:
+  data_dir: data
+  logs_dir: logs
