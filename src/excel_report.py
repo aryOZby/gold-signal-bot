@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import re
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -13,12 +15,16 @@ from .models import SignalRecord, TradeRecord
 from .stats import build_stats, max_tp_hit
 from .timeutil import display_dt
 
+_LOG = logging.getLogger(__name__)
+
 HEADER_FILL = PatternFill("solid", fgColor="1F4E79")
 HEADER_FONT = Font(color="FFFFFF", bold=True)
 WRAP = Alignment(wrap_text=True, vertical="center")
 
 TRADE_HEADERS = [
     "קבוצה",
+    "מזהה טלגרם",
+    "יוזרניים טלגרם",
     "מזהה איתות",
     "תאריך ושעה קבלת איתות",
     "סימול",
@@ -43,6 +49,8 @@ TRADE_HEADERS = [
 SIGNAL_HEADERS = [
     "מזהה איתות",
     "קבוצה",
+    "מזהה טלגרם",
+    "יוזרניים טלגרם",
     "תאריך ושעה קבלה",
     "סימול",
     "כיוון",
@@ -80,7 +88,7 @@ class ExcelReporter:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def month_path(self, group_name: str, year: int, month: int, final: bool = False) -> Path:
-        folder = self.output_dir / group_name
+        folder = self.output_dir / safe_group_folder(group_name)
         folder.mkdir(parents=True, exist_ok=True)
         suffix = "_final" if final else ""
         return folder / f"{year:04d}-{month:02d}{suffix}.xlsx"
@@ -94,6 +102,7 @@ class ExcelReporter:
         trades: list[TradeRecord],
         final: bool = False,
     ) -> Path:
+        signals, trades = isolate_group(group_name, signals, trades)
         path = self.month_path(group_name, year, month, final=final)
         wb = Workbook()
         ws_trades = wb.active
@@ -124,25 +133,27 @@ class ExcelReporter:
             if t.sl_moved_to_be and (reason or "").upper() == "SL":
                 reason = "BREAKEVEN"
             ws.cell(i, 1, t.group_name)
-            ws.cell(i, 2, t.signal_id)
-            ws.cell(i, 3, display_dt(t.received_at, self.tz))
-            ws.cell(i, 4, t.symbol)
-            ws.cell(i, 5, t.side)
-            ws.cell(i, 6, f"{t.zone_low:g}-{t.zone_high:g}")
-            ws.cell(i, 7, t.tp_index)
-            ws.cell(i, 8, t.tp_price)
-            ws.cell(i, 9, t.ticket)
-            ws.cell(i, 10, t.lot)
-            ws.cell(i, 11, display_dt(t.entry_time, self.tz))
-            ws.cell(i, 12, t.entry_price)
-            ws.cell(i, 13, t.sl)
-            ws.cell(i, 14, "כן" if t.sl_moved_to_be else "לא")
-            ws.cell(i, 15, display_dt(t.exit_time, self.tz))
-            ws.cell(i, 16, t.exit_price)
-            ws.cell(i, 17, REASON_HE.get(reason.upper(), reason) if reason else "")
-            ws.cell(i, 18, t.profit)
-            ws.cell(i, 19, t.pips)
-            ws.cell(i, 20, STATUS_HE.get(t.status, t.status))
+            ws.cell(i, 2, t.telegram_chat_id or "")
+            ws.cell(i, 3, t.telegram_username)
+            ws.cell(i, 4, t.signal_id)
+            ws.cell(i, 5, display_dt(t.received_at, self.tz))
+            ws.cell(i, 6, t.symbol)
+            ws.cell(i, 7, t.side)
+            ws.cell(i, 8, f"{t.zone_low:g}-{t.zone_high:g}")
+            ws.cell(i, 9, t.tp_index)
+            ws.cell(i, 10, t.tp_price)
+            ws.cell(i, 11, t.ticket)
+            ws.cell(i, 12, t.lot)
+            ws.cell(i, 13, display_dt(t.entry_time, self.tz))
+            ws.cell(i, 14, t.entry_price)
+            ws.cell(i, 15, t.sl)
+            ws.cell(i, 16, "כן" if t.sl_moved_to_be else "לא")
+            ws.cell(i, 17, display_dt(t.exit_time, self.tz))
+            ws.cell(i, 18, t.exit_price)
+            ws.cell(i, 19, REASON_HE.get(reason.upper(), reason) if reason else "")
+            ws.cell(i, 20, t.profit)
+            ws.cell(i, 21, t.pips)
+            ws.cell(i, 22, STATUS_HE.get(t.status, t.status))
         _autosize(ws, TRADE_HEADERS)
 
     def _write_signals(self, ws, signals: list[SignalRecord], trades: list[TradeRecord]) -> None:
@@ -156,15 +167,17 @@ class ExcelReporter:
                 level = max_tp_hit(by_sig.get(s.id, []))
             ws.cell(i, 1, s.id)
             ws.cell(i, 2, s.group_name)
-            ws.cell(i, 3, display_dt(s.received_at, self.tz))
-            ws.cell(i, 4, s.symbol)
-            ws.cell(i, 5, s.side)
-            ws.cell(i, 6, f"{s.zone_low:g}-{s.zone_high:g}")
-            ws.cell(i, 7, s.sl)
-            ws.cell(i, 8, STATUS_HE.get(s.status, s.status))
-            ws.cell(i, 9, level)
-            ws.cell(i, 10, display_dt(s.completed_at, self.tz))
-            ws.cell(i, 11, s.skipped_reason)
+            ws.cell(i, 3, s.chat_id or "")
+            ws.cell(i, 4, s.username)
+            ws.cell(i, 5, display_dt(s.received_at, self.tz))
+            ws.cell(i, 6, s.symbol)
+            ws.cell(i, 7, s.side)
+            ws.cell(i, 8, f"{s.zone_low:g}-{s.zone_high:g}")
+            ws.cell(i, 9, s.sl)
+            ws.cell(i, 10, STATUS_HE.get(s.status, s.status))
+            ws.cell(i, 11, level)
+            ws.cell(i, 12, display_dt(s.completed_at, self.tz))
+            ws.cell(i, 13, s.skipped_reason)
         _autosize(ws, SIGNAL_HEADERS)
 
     def _write_stats(
@@ -269,3 +282,25 @@ def _header(ws, headers: list[str]) -> None:
 def _autosize(ws, headers: list[str]) -> None:
     for i, name in enumerate(headers, start=1):
         ws.column_dimensions[get_column_letter(i)].width = max(14, min(36, len(name) + 4))
+
+
+def safe_group_folder(name: str) -> str:
+    cleaned = re.sub(r"[^\w.\-]+", "_", (name or "").strip(), flags=re.UNICODE)
+    return cleaned.strip("._") or "group"
+
+
+def isolate_group(
+    group_name: str,
+    signals: list[SignalRecord],
+    trades: list[TradeRecord],
+) -> tuple[list[SignalRecord], list[TradeRecord]]:
+    sigs = [s for s in signals if s.group_name == group_name]
+    trs = [t for t in trades if t.group_name == group_name]
+    leaked = (len(signals) - len(sigs)) + (len(trades) - len(trs))
+    if leaked:
+        _LOG.warning(
+            "Dropped %s rows that did not belong to group %s",
+            leaked,
+            group_name,
+        )
+    return sigs, trs

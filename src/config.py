@@ -76,6 +76,7 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
 
     groups = []
     default_lot = float(os.getenv("LOT_SIZE", "0.01"))
+    default_magic = int(trading.get("magic_number") or 260908)
     for item in telegram.get("groups") or []:
         name = str(item["name"]).strip()
         env_id = os.getenv(f"TELEGRAM_{name.upper()}_CHAT_ID")
@@ -91,12 +92,14 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
             chat_id = 0
         if not chat_id and not username:
             raise ValueError(f"Group {name} needs chat_id or username")
+        magic = int(item.get("magic") or (default_magic + len(groups)))
         groups.append(
             GroupConfig(
                 name=name,
                 chat_id=chat_id,
                 lot=float(item.get("lot", default_lot)),
                 username=username,
+                magic=magic,
             )
         )
     if len(groups) < 1:

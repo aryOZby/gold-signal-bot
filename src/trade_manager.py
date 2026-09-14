@@ -132,10 +132,11 @@ class TradingEngine:
         rec = _new_signal(signal_id, item, symbol, SignalStatus.ACTIVE.value, "")
         self.db.insert_signal(rec)
 
+        magic = item.group.magic or self.cfg.magic_number
         # --- EXECUTE FIRST, persist after each fill ---
         any_ok = False
         for index, tp_price in enumerate(item.parsed.tps, start=1):
-            comment = f"GS|{item.group.name[:6]}|T{index}"[:31]
+            comment = f"GS|{item.group.name[:8]}|T{index}"[:31]
             result = None
             attempts = self.cfg.order_retries + 1
             for _ in range(attempts):
@@ -147,7 +148,7 @@ class TradingEngine:
                     tp=tp_price,
                     comment=comment,
                     deviation=self.cfg.deviation,
-                    magic=self.cfg.magic_number,
+                    magic=magic,
                 )
                 if result.ok:
                     break
@@ -177,6 +178,8 @@ class TradingEngine:
                     status=TradeStatus.OPEN.value,
                     zone_low=item.parsed.zone_low,
                     zone_high=item.parsed.zone_high,
+                    telegram_chat_id=item.chat_id,
+                    telegram_username=item.group.username,
                 )
                 self.db.insert_trade(trade)
             else:
@@ -206,6 +209,8 @@ class TradingEngine:
                     status=TradeStatus.FAILED.value,
                     zone_low=item.parsed.zone_low,
                     zone_high=item.parsed.zone_high,
+                    telegram_chat_id=item.chat_id,
+                    telegram_username=item.group.username,
                 )
                 self.db.insert_trade(failed)
 
@@ -218,11 +223,21 @@ class TradingEngine:
 
         self._queue_report(item.group.name, received)
 
+    def _live_positions(self) -> dict:
+        magics = {self.cfg.magic_number}
+        for group in self.cfg.groups:
+            magics.add(group.magic or self.cfg.magic_number)
+        live = {}
+        for magic in magics:
+            for pos in self.broker.positions(magic):
+                live[pos.ticket] = pos
+        return live
+
     def _monitor(self) -> None:
         open_trades = self.db.open_trades()
         if not open_trades:
             return
-        live = {p.ticket: p for p in self.broker.positions(self.cfg.magic_number)}
+        live = self._live_positions()
         live_tickets = set(live)
 
         for trade in open_trades:
@@ -343,7 +358,7 @@ class TradingEngine:
             self._safety_due.pop(signal_id, None)
 
     def _apply_safety(self, signal_id: str) -> None:
-        live = {p.ticket: p for p in self.broker.positions(self.cfg.magic_number)}
+        live = self._live_positions()
         trades = [t for t in self.db.trades_for_signal(signal_id) if t.status == TradeStatus.OPEN.value]
         for trade in trades:
             if trade.ticket is None or trade.ticket not in live:
@@ -487,4 +502,5 @@ def _new_signal(
         status=status,
         skipped_reason=reason,
         tps=item.parsed.tps,
+        username=item.group.username,
     )

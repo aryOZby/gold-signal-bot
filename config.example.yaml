@@ -7,9 +7,11 @@ telegram:
     - name: group_a
       chat_id: -2001216034
       lot: 0.01
+      magic: 260908
     - name: TechnicalPips6273
       username: TechnicalPips6273
       lot: 0.01
+      magic: 260909
   admin_chat_id: 0
 
 trading:

@@ -54,6 +54,7 @@ class GroupConfig:
     chat_id: int
     lot: float
     username: str = ""
+    magic: int = 0
 
 
 @dataclass
@@ -115,6 +116,8 @@ class TradeRecord:
     status: str
     zone_low: float = 0.0
     zone_high: float = 0.0
+    telegram_chat_id: int = 0
+    telegram_username: str = ""
 
 
 @dataclass
@@ -135,3 +138,4 @@ class SignalRecord:
     max_tp_hit: Optional[int] = None
     completed_at: Optional[datetime] = None
     tps: tuple[float, ...] = field(default_factory=tuple)
+    username: str = ""

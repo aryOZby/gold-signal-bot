@@ -77,9 +77,19 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_trades_signal ON trades(signal_id);
                 CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
                 CREATE INDEX IF NOT EXISTS idx_signals_group_time ON signals(group_name, received_at);
+                CREATE INDEX IF NOT EXISTS idx_trades_group_time ON trades(group_name, received_at);
                 """
             )
+            self._ensure_column("trades", "telegram_chat_id", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column("trades", "telegram_username", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column("signals", "username", "TEXT NOT NULL DEFAULT ''")
             self._conn.commit()
+
+    def _ensure_column(self, table: str, name: str, decl: str) -> None:
+        rows = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        existing = {str(r[1]) for r in rows}
+        if name not in existing:
+            self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
     def already_processed(self, chat_id: int, telegram_msg_id: int) -> bool:
         with self._lock:
@@ -96,8 +106,8 @@ class Database:
                 INSERT INTO signals (
                     id, group_name, chat_id, telegram_msg_id, received_at, symbol, side,
                     zone_low, zone_high, sl, raw_text, status, skipped_reason, max_tp_hit,
-                    completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    completed_at, username
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     rec.id,
@@ -115,6 +125,7 @@ class Database:
                     rec.skipped_reason,
                     rec.max_tp_hit,
                     iso(rec.completed_at),
+                    rec.username,
                 ),
             )
             self._conn.commit()
@@ -126,8 +137,9 @@ class Database:
                 INSERT INTO trades (
                     ticket, signal_id, group_name, tp_index, tp_price, lot, side, symbol,
                     received_at, entry_time, entry_price, sl, original_sl, sl_moved_to_be,
-                    exit_time, exit_price, close_reason, profit, pips, status, zone_low, zone_high
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    exit_time, exit_price, close_reason, profit, pips, status, zone_low, zone_high,
+                    telegram_chat_id, telegram_username
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     rec.ticket,
@@ -152,6 +164,8 @@ class Database:
                     rec.status,
                     rec.zone_low,
                     rec.zone_high,
+                    rec.telegram_chat_id,
+                    rec.telegram_username,
                 ),
             )
             self._conn.commit()
@@ -312,6 +326,8 @@ class Database:
             status=row["status"],
             zone_low=row["zone_low"] or 0.0,
             zone_high=row["zone_high"] or 0.0,
+            telegram_chat_id=int(_row_get(row, "telegram_chat_id", 0) or 0),
+            telegram_username=str(_row_get(row, "telegram_username", "") or ""),
         )
 
     @staticmethod
@@ -332,4 +348,12 @@ class Database:
             skipped_reason=row["skipped_reason"] or "",
             max_tp_hit=row["max_tp_hit"],
             completed_at=parse_iso(row["completed_at"]),
+            username=str(_row_get(row, "username", "") or ""),
         )
+
+
+def _row_get(row: sqlite3.Row, key: str, default=None):
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return default

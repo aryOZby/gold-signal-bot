@@ -88,3 +88,22 @@ def test_group_lookup_by_username():
     assert group_by_username(cfg, "technicalpips6273") is not None
     assert group_by_username(cfg, "other") is None
     assert group_by_chat_id(cfg, 0) is None
+
+
+def test_isolate_group_drops_foreign_rows():
+    from src.excel_report import isolate_group
+    from src.models import SignalRecord, TradeRecord
+    from src.timeutil import utcnow
+
+    now = utcnow()
+    signals = [
+        SignalRecord("a", "group_a", 1, 1, now, "XAUUSD", "SELL", 1, 2, 3, "", "completed"),
+        SignalRecord("b", "group_b", 2, 1, now, "XAUUSD", "BUY", 1, 2, 3, "", "completed"),
+    ]
+    trades = [
+        TradeRecord(1, 1, "a", "group_a", 1, 1, 0.01, "SELL", "XAUUSD", now, now, 1, 1, 1, False, now, 1, "TP", 1, 1, "closed"),
+        TradeRecord(2, 2, "b", "group_b", 1, 1, 0.01, "BUY", "XAUUSD", now, now, 1, 1, 1, False, now, 1, "TP", 1, 1, "closed"),
+    ]
+    sigs, trs = isolate_group("group_a", signals, trades)
+    assert [s.id for s in sigs] == ["a"]
+    assert [t.group_name for t in trs] == ["group_a"]

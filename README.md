@@ -116,7 +116,7 @@ broker:
 python main.py
 ```
 
-לוגים: `logs/bot.log`. אקסל חי: `reports/<שם_קבוצה>/YYYY-MM.xlsx`. ב-01 לחודש: קובץ `YYYY-MM_final.xlsx` נשלח לאדמין אם הוגדר.
+לוגים: `logs/bot.log`. אקסל חי לכל קבוצה בנפרד: `reports/group_a/YYYY-MM.xlsx` ו-`reports/TechnicalPips6273/YYYY-MM.xlsx`. אין ערבוב שורות בין הקבצים. ב-01 לחודש: קובץ `YYYY-MM_final.xlsx` לכל קבוצה.
 
 ## אקסל
 

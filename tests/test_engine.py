@@ -157,3 +157,32 @@ def test_safety_fills_missing_sl_tp(tmp_path: Path):
     delta = engine.cfg.safety_pips * engine.cfg.pip_size
     assert abs(pos.sl - (trade.entry_price + delta)) < 1e-6
     assert abs(pos.tp - (trade.entry_price - delta)) < 1e-6
+
+
+def test_excel_files_are_isolated_per_group(tmp_path: Path):
+    from openpyxl import load_workbook
+
+    engine, db, broker = _engine(tmp_path)
+    group_a, group_b = engine.cfg.groups
+    engine._handle(_incoming(SELL, group_a, 10))
+    for trade in db.open_trades():
+        if trade.ticket:
+            broker.simulate_close(trade.ticket, CloseReason.TP, exit_price=trade.tp_price, profit=1)
+    engine._monitor()
+    engine._handle(_incoming(BUY, group_b, 20))
+
+    now = datetime.now(timezone.utc)
+    path_a = Path(engine._write_excel(group_a.name, now, final=False))
+    path_b = Path(engine._write_excel(group_b.name, now, final=False))
+    assert path_a.parent.name == "group_a"
+    assert path_b.parent.name == "group_b"
+    assert path_a != path_b
+
+    book_a = load_workbook(path_a)["עסקאות"]
+    book_b = load_workbook(path_b)["עסקאות"]
+    names_a = {book_a.cell(row, 1).value for row in range(2, book_a.max_row + 1)}
+    names_b = {book_b.cell(row, 1).value for row in range(2, book_b.max_row + 1)}
+    assert names_a == {"group_a"}
+    assert names_b == {"group_b"}
+    assert book_a.max_row == 7
+    assert book_b.max_row == 7
