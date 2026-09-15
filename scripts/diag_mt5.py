@@ -55,6 +55,32 @@ def discover_terminals() -> list[str]:
     return found
 
 
+def terminal_logs(tail: int = 30) -> list[str]:
+    """MT5 writes auth + API-rejection lines to %APPDATA%\\MetaQuotes\\Terminal\\<id>\\logs."""
+    base = Path.home() / "AppData" / "Roaming" / "MetaQuotes" / "Terminal"
+    if not base.exists():
+        return ["  לא נמצאה תיקיית לוגים של MetaQuotes"]
+    logs: list[Path] = []
+    for folder in base.iterdir():
+        log_dir = folder / "logs"
+        if log_dir.is_dir():
+            logs.extend(log_dir.glob("*.log"))
+    if not logs:
+        return ["  לא נמצאו קבצי לוג"]
+    newest = max(logs, key=lambda p: p.stat().st_mtime)
+    text = ""
+    for encoding in ("utf-16", "utf-8", "cp1255"):
+        try:
+            text = newest.read_text(encoding=encoding, errors="strict")
+            break
+        except (UnicodeError, OSError):
+            continue
+    if not text:
+        text = newest.read_text(encoding="utf-8", errors="replace")
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+    return [f"  קובץ: {newest}"] + [f"  {ln}" for ln in lines[-tail:]]
+
+
 def attempt(label: str, **kwargs) -> bool:
     mt5.shutdown()
     ok = mt5.initialize(**kwargs)
@@ -118,6 +144,10 @@ def main() -> None:
             ok = attempt("initialize(+login/password/server)", timeout=60000, **kwargs)
             if ok:
                 break
+
+    print("\nלוג הטרמינל (סוף הקובץ):")
+    for line in terminal_logs():
+        print(line)
 
     print("\n" + "=" * 62)
     if ok:
