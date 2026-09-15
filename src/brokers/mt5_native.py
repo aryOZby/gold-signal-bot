@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from ..models import BrokerPosition, ClosedDeal, CloseReason, OrderResult, Side
@@ -50,27 +51,69 @@ class Mt5NativeBroker(Broker):
         self._connected = False
 
     def connect(self) -> None:
-        kwargs = {}
-        if self.path:
-            kwargs["path"] = self.path
-        if not mt5.initialize(**kwargs):
-            raise RuntimeError(f"MT5 initialize failed: {mt5.last_error()}")
-        if self.login and self.password and self.server:
-            if not mt5.login(self.login, password=self.password, server=self.server):
-                err = mt5.last_error()
-                mt5.shutdown()
-                raise RuntimeError(f"MT5 login failed: {err}")
-        info = mt5.account_info()
-        if info is None:
-            raise RuntimeError("MT5 account_info failed")
-        if int(getattr(info, "margin_mode", _ACCOUNT_HEDGING)) != _ACCOUNT_HEDGING:
+        errors = []
+        for kwargs in self._init_attempts():
             mt5.shutdown()
-            raise RuntimeError(
-                "חשבון נטינג (netting) לא נתמך. האסטרטגיה דורשת חשבון גידור (hedging) "
-                "כדי לפתוח כמה פוזיציות על אותו סימול עם טייקים שונים."
+            ok = mt5.initialize(**kwargs)
+            if not ok:
+                errors.append((kwargs.get("path"), mt5.last_error()))
+                continue
+            if self.login and self.password and self.server:
+                if not mt5.login(self.login, password=self.password, server=self.server):
+                    errors.append((kwargs.get("path"), mt5.last_error()))
+                    mt5.shutdown()
+                    continue
+            info = mt5.account_info()
+            if info is None:
+                errors.append((kwargs.get("path"), mt5.last_error() or "account_info failed"))
+                mt5.shutdown()
+                continue
+            if int(getattr(info, "margin_mode", _ACCOUNT_HEDGING)) != _ACCOUNT_HEDGING:
+                mt5.shutdown()
+                raise RuntimeError(
+                    "חשבון נטינג (netting) לא נתמך. האסטרטגיה דורשת חשבון גידור (hedging) "
+                    "כדי לפתוח כמה פוזיציות על אותו סימול עם טייקים שונים."
+                )
+            self._connected = True
+            _LOG.info(
+                "Connected to MT5 account %s server %s path=%s",
+                info.login,
+                info.server,
+                kwargs.get("path") or "(default)",
             )
-        self._connected = True
-        _LOG.info("Connected to MT5 account %s server %s", info.login, info.server)
+            return
+        raise RuntimeError(
+            "MT5 initialize failed. Keep JustMarkets open and logged in, "
+            "set MT5_TERMINAL_PATH to terminal64.exe. Last errors: "
+            f"{errors[-3:]}"
+        )
+
+    def _init_attempts(self) -> list[dict]:
+        attempts: list[dict] = []
+        paths: list[Optional[str]] = []
+        if self.path:
+            paths.append(self.path)
+        paths.extend(_discover_terminals())
+        paths.append(None)
+        seen = set()
+        for path in paths:
+            key = path or ""
+            if key in seen:
+                continue
+            seen.add(key)
+            base: dict = {"timeout": 60_000}
+            if path:
+                base["path"] = path
+            attempts.append(dict(base))
+            if self.login and self.password and self.server:
+                with_login = dict(base)
+                with_login.update(
+                    login=int(self.login),
+                    password=self.password,
+                    server=self.server,
+                )
+                attempts.append(with_login)
+        return attempts
 
     def shutdown(self) -> None:
         if self._connected and mt5 is not None:
@@ -245,3 +288,23 @@ def _filling_candidates(info) -> list[int]:
         if filling not in ordered:
             ordered.append(filling)
     return ordered
+
+
+def _discover_terminals() -> list[str]:
+    roots = [
+        Path(r"C:\Program Files"),
+        Path(r"C:\Program Files (x86)"),
+        Path.home() / "AppData" / "Roaming" / "MetaQuotes" / "Terminal",
+    ]
+    found: list[str] = []
+    for root in roots:
+        if not root.exists():
+            continue
+        try:
+            for exe in root.rglob("terminal64.exe"):
+                found.append(str(exe))
+        except OSError:
+            continue
+    preferred = [p for p in found if "just" in p.lower() or "market" in p.lower()]
+    others = [p for p in found if p not in preferred]
+    return preferred + others
