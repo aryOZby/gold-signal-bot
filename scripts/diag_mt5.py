@@ -104,32 +104,32 @@ def main() -> None:
         print("  !! הנתיב ב-MT5_TERMINAL_PATH לא קיים")
 
     print("\nניסיונות התחברות:")
+    paths = [p for p in [env_path, *discover_terminals()] if p]
     ok = attempt("initialize()", timeout=60000)
-    if not ok and env_path:
-        ok = attempt("initialize(path)", path=env_path, timeout=60000)
+    for path in paths:
+        if ok:
+            break
+        ok = attempt(f"initialize(path={Path(path).parent.name})", path=path, timeout=60000)
     if not ok and login and password and server:
-        ok = attempt(
-            "initialize(path, login, password, server)",
-            path=env_path or discover_terminals()[0],
-            login=int(login),
-            password=password,
-            server=server,
-            timeout=60000,
-        )
+        for path in paths or [None]:
+            kwargs = {"login": int(login), "password": password, "server": server}
+            if path:
+                kwargs["path"] = path
+            ok = attempt("initialize(+login/password/server)", timeout=60000, **kwargs)
+            if ok:
+                break
 
     print("\n" + "=" * 62)
     if ok:
         print("הכל תקין. אפשר להריץ:  py main.py")
     else:
-        print("נכשל. עבור על הרשימה לפי הסדר:")
-        print("  1. פתח את JustMarkets MetaTrader 5 והתחבר לחשבון (File > Login to Trade Account)")
-        print("     בפינה ימנית-תחתונה חייב להופיע קצב נתונים, לא 'No connection'.")
-        print("  2. Tools > Options > Expert Advisors:")
+        print("נכשל. החשוד המרכזי כש-(-6) חוזר מיד (ולא IPC timeout):")
+        print("  1. ב-MT5: Tools > Options > Expert Advisors")
+        print("     X  Disable automated trading via external Python API  <-- להוריד את הסימון")
         print("     V  Allow algorithmic trading")
-        print("     X  Disable automated trading via external Python API  <-- חייב להיות לא מסומן")
-        print("  3. הרץ את CMD באותה רמת הרשאה כמו MT5 (שניהם רגילים, או שניהם כמנהל).")
-        print(f"     כרגע Python רץ כ-Admin={is_elevated()}")
-        print("  4. אם החשבון לא מחובר - מלא MT5_LOGIN/MT5_PASSWORD/MT5_SERVER ב-.env")
+        print("     אחרי השינוי: סגור את MT5 לגמרי ופתח מחדש.")
+        print("  2. ודא ש-MT5 מחובר לחשבון מסחר - למטה מימין קצב נתונים, לא 'No connection'.")
+        print("  3. מלא MT5_PASSWORD ו-MT5_SERVER ב-.env (השרת בדיוק כפי שמופיע בחלון הלוגין).")
     mt5.shutdown()
 
 
