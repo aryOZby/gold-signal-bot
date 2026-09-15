@@ -83,9 +83,14 @@ class Mt5NativeBroker(Broker):
             )
             return
         raise RuntimeError(
-            "MT5 initialize failed. Keep JustMarkets open and logged in, "
-            "set MT5_TERMINAL_PATH to terminal64.exe. Last errors: "
-            f"{errors[-3:]}"
+            "MT5 initialize failed. בדוק לפי הסדר:\n"
+            "  1. MT5 פתוח ומחובר לחשבון מסחר (למטה מימין מופיע קצב נתונים).\n"
+            "  2. Tools > Options > Expert Advisors: לבטל את הסימון של\n"
+            "     'Disable automated trading via external Python API'.\n"
+            "  3. CMD ו-MT5 באותה רמת הרשאה (שניהם רגילים או שניהם כמנהל).\n"
+            "  4. או למלא MT5_LOGIN/MT5_PASSWORD/MT5_SERVER ב-.env.\n"
+            "  לאבחון מלא:  py scripts\\diag_mt5.py\n"
+            f"  Last errors: {errors[-3:]}"
         )
 
     def _init_attempts(self) -> list[dict]:
@@ -104,7 +109,8 @@ class Mt5NativeBroker(Broker):
             base: dict = {"timeout": 60_000}
             if path:
                 base["path"] = path
-            attempts.append(dict(base))
+            # Credentials passed to initialize() let the terminal authorize during
+            # startup, which also works when it was never logged in manually.
             if self.login and self.password and self.server:
                 with_login = dict(base)
                 with_login.update(
@@ -113,6 +119,7 @@ class Mt5NativeBroker(Broker):
                     server=self.server,
                 )
                 attempts.append(with_login)
+            attempts.append(dict(base))
         return attempts
 
     def shutdown(self) -> None:
