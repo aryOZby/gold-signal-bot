@@ -55,6 +55,40 @@ def discover_terminals() -> list[str]:
     return found
 
 
+def report_gold_symbols() -> None:
+    """אחרי חיבור מוצלח: אילו סימולי זהב קיימים אצל הברוקר ומה הבוט יבחר."""
+    override = ""
+    try:
+        sys.path.insert(0, str(ROOT))
+        from src.config import load_config
+
+        override = load_config().symbol_override
+    except Exception as exc:
+        print(f"  (לא הצלחתי לקרוא את config.yaml: {exc})")
+
+    all_symbols = mt5.symbols_get() or []
+    gold = [s.name for s in all_symbols if "XAU" in s.name.upper() or "GOLD" in s.name.upper()]
+    print(f"  סימולי זהב אצל הברוקר ({len(gold)}): {', '.join(gold) if gold else 'לא נמצאו'}")
+    print(f"  symbol_override ב-config.yaml: {override or '(ריק - ישתמש בסימול מההודעה)'}")
+
+    target = override or "XAUUSD"
+    if gold and target not in gold:
+        print(f"  !! '{target}' לא קיים אצל הברוקר. החלף ב-config.yaml לאחד מהרשימה למעלה.")
+        return
+
+    if not mt5.symbol_select(target, True):
+        print(f"  !! symbol_select נכשל עבור {target}: {mt5.last_error()}")
+        return
+    info = mt5.symbol_info(target)
+    tick = mt5.symbol_info_tick(target)
+    if info is None or tick is None:
+        print(f"  !! אין נתוני מחיר עבור {target}")
+        return
+    print(f"  {target}: bid={tick.bid} ask={tick.ask} digits={info.digits} point={info.point}")
+    print(f"     נפח: min={info.volume_min} max={info.volume_max} step={info.volume_step}")
+    print(f"     trade_mode={info.trade_mode} (0=disabled, 4=full)  stops_level={info.trade_stops_level}")
+
+
 def terminal_logs(tail: int = 30) -> list[str]:
     """MT5 writes auth + API-rejection lines to %APPDATA%\\MetaQuotes\\Terminal\\<id>\\logs."""
     base = Path.home() / "AppData" / "Roaming" / "MetaQuotes" / "Terminal"
@@ -144,6 +178,10 @@ def main() -> None:
             ok = attempt("initialize(+login/password/server)", timeout=60000, **kwargs)
             if ok:
                 break
+
+    if ok:
+        print("\nבדיקת סימול הזהב:")
+        report_gold_symbols()
 
     print("\nלוג הטרמינל (סוף הקובץ):")
     for line in terminal_logs():
