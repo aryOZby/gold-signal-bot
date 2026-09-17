@@ -69,7 +69,8 @@ def main() -> int:
     print("הגשר עובד. ודא שב-config.yaml רשום:")
     print("  broker:")
     print("    type: file_bridge")
-    print(f'    common_files_dir: "{str(target)}"')
+    # גרשיים בודדים חובה: ב-YAML עם גרשיים כפולים הרצף \U נחשב escape ושובר את הקובץ.
+    print(f"    common_files_dir: '{str(target)}'")
     print("  dry_run: false      (וגם DRY_RUN=false ב-.env)")
     return 0
 
