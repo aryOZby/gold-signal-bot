@@ -4,20 +4,56 @@
 
 #include <Trade/Trade.mqh>
 
-input long InpMagic     = 260908;
-input int  InpTimerMs   = 50;
-input int  InpDeviation = 30;
+// רשימת ה-magic של כל הקבוצות, מופרדים בפסיק. חייב להתאים ל-config.yaml.
+input string InpMagicList = "260908,260909";
+input int    InpTimerMs   = 50;
+input int    InpDeviation = 30;
 
 CTrade trade;
 string lastPosKeys = "";
+long   magics[];
+
+void ParseMagics()
+{
+   string parts[];
+   int n = StringSplit(InpMagicList, ',', parts);
+   ArrayResize(magics, 0);
+   for(int i = 0; i < n; i++)
+   {
+      StringTrimLeft(parts[i]);
+      StringTrimRight(parts[i]);
+      if(StringLen(parts[i]) == 0)
+         continue;
+      long m = StringToInteger(parts[i]);
+      if(m <= 0)
+         continue;
+      int size = ArraySize(magics);
+      ArrayResize(magics, size + 1);
+      magics[size] = m;
+   }
+   if(ArraySize(magics) == 0)
+   {
+      ArrayResize(magics, 1);
+      magics[0] = 260908;
+   }
+}
+
+bool IsOurMagic(const long magic)
+{
+   for(int i = 0; i < ArraySize(magics); i++)
+      if(magics[i] == magic)
+         return true;
+   return false;
+}
 
 int OnInit()
 {
-   trade.SetExpertMagicNumber((int)InpMagic);
+   ParseMagics();
+   trade.SetExpertMagicNumber((int)magics[0]);
    trade.SetDeviationInPoints(InpDeviation);
    if(!EventSetMillisecondTimer(InpTimerMs))
       EventSetTimer(1);
-   Print("GoldSignalBridge started, magic=", InpMagic);
+   Print("GoldSignalBridge started, magics=", InpMagicList, " symbol=", _Symbol);
    return INIT_SUCCEEDED;
 }
 
@@ -184,7 +220,7 @@ void DetectClosesAndWritePositions()
       ulong ticket = PositionGetTicket(i);
       if(ticket == 0)
          continue;
-      if(PositionGetInteger(POSITION_MAGIC) != InpMagic)
+      if(!IsOurMagic(PositionGetInteger(POSITION_MAGIC)))
          continue;
       string side = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? "BUY" : "SELL";
       string line = "POS|" +
