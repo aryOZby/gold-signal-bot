@@ -1,6 +1,8 @@
 .tools/
 .env
 config.yaml
+config.yaml.bak
+groups.txt
 *.session
 *.session-journal
 __pycache__/
