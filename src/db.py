@@ -235,6 +235,14 @@ class Database:
             ).fetchall()
         return [self._trade_from_row(r) for r in rows]
 
+    def trade_by_ticket(self, ticket: int) -> Optional[TradeRecord]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM trades WHERE ticket=? ORDER BY id DESC LIMIT 1",
+                (int(ticket),),
+            ).fetchone()
+        return self._trade_from_row(row) if row else None
+
     def trades_for_signal(self, signal_id: str) -> list[TradeRecord]:
         with self._lock:
             rows = self._conn.execute(

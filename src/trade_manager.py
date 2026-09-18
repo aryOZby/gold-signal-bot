@@ -60,10 +60,11 @@ class TradingEngine:
         self._report_thread: Optional[threading.Thread] = None
         self._safety_due: dict[str, float] = {}
         self._be_done: set[str] = set()
+        self._guarded: set[int] = set()
 
     def start(self) -> None:
         self.broker.connect()
-        self._restore()
+        self._recover()
         self._thread = threading.Thread(target=self._run, name="trading", daemon=True)
         self._report_thread = threading.Thread(target=self._report_loop, name="excel", daemon=True)
         self._thread.start()
@@ -76,17 +77,140 @@ class TradingEngine:
     def submit(self, incoming: IncomingSignal) -> None:
         self._q.put(incoming)
 
-    def _restore(self) -> None:
+    def _recover(self) -> None:
+        """התאוששות אחרי קריסה או ריסטארט: מיישר את ה-DB מול המצב אצל הברוקר.
+
+        שלושה מקרים: עסקאות שנסגרו בזמן שהבוט היה למטה, פוזיציות חיות שכבר
+        מוכרות, ופוזיציות חיות שלא הספיקו להיכתב ל-DB לפני הקריסה.
+        """
         open_trades = self.db.open_trades()
+        known: set[int] = set()
         for trade in open_trades:
             self._safety_due.setdefault(trade.signal_id, time.monotonic() + 1)
             if trade.sl_moved_to_be:
                 self._be_done.add(trade.signal_id)
-        if open_trades:
-            _LOG.info("Restored %s open trades", len(open_trades))
+            if trade.ticket is not None:
+                known.add(int(trade.ticket))
+
+        try:
+            live_by_magic = self._positions_by_magic()
+        except Exception:
+            _LOG.exception("recovery: broker positions unavailable, keeping DB state as-is")
+            return
+
+        live_tickets = {pos.ticket for positions in live_by_magic.values() for pos in positions}
+
+        closed = 0
+        for trade in open_trades:
+            if trade.ticket is None or int(trade.ticket) in live_tickets:
+                continue
+            if self._finalize_closed(trade):
+                closed += 1
+
+        adopted = 0
+        for magic, positions in live_by_magic.items():
+            for pos in positions:
+                if int(pos.ticket) in known:
+                    continue
+                known.add(int(pos.ticket))
+                if self.db.trade_by_ticket(pos.ticket) is not None:
+                    continue
+                if self._adopt_position(pos, magic):
+                    adopted += 1
+
+        _LOG.info(
+            "Recovery: %s open in DB, %s closed while down, %s orphan positions adopted",
+            len(open_trades),
+            closed,
+            adopted,
+        )
+        if closed or adopted:
+            self.alert(
+                f"התאוששות אחרי הפעלה מחדש: {closed} עסקאות נסגרו בזמן שהבוט היה למטה, "
+                f"{adopted} פוזיציות אומצו.",
+                None,
+            )
+
+    def _adopt_position(self, pos, magic: int) -> bool:
+        """מאמץ פוזיציה חיה שאינה ב-DB כדי שתנוהל ותתועד כרגיל."""
+        group_name, tp_index = _parse_trade_comment(pos.comment)
+        if group_name is None:
+            group = self._group_for_magic(magic)
+            group_name = group.name if group else "recovered"
+        signal = next(
+            (s for s in self.db.active_signals() if s.group_name == group_name), None
+        )
+        signal_id = signal.id if signal else f"recovered-{pos.ticket}"
+        now = utcnow()
+        trade = TradeRecord(
+            id=None,
+            ticket=int(pos.ticket),
+            signal_id=signal_id,
+            group_name=group_name,
+            tp_index=tp_index or 0,
+            tp_price=float(pos.tp or 0.0),
+            lot=float(pos.volume),
+            side=pos.side.value,
+            symbol=pos.symbol,
+            received_at=signal.received_at if signal else now,
+            entry_time=now,
+            entry_price=float(pos.price_open),
+            sl=float(pos.sl or 0.0),
+            original_sl=float(pos.sl or 0.0),
+            sl_moved_to_be=False,
+            exit_time=None,
+            exit_price=None,
+            close_reason=None,
+            profit=None,
+            pips=None,
+            status=TradeStatus.OPEN.value,
+            zone_low=signal.zone_low if signal else 0.0,
+            zone_high=signal.zone_high if signal else 0.0,
+            telegram_chat_id=signal.chat_id if signal else 0,
+            telegram_username=signal.username if signal else "",
+        )
+        self.db.insert_trade(trade)
+        self._safety_due.setdefault(signal_id, time.monotonic() + 1)
+        _LOG.warning(
+            "Adopted orphan position ticket=%s group=%s tp_index=%s",
+            pos.ticket,
+            group_name,
+            tp_index,
+        )
+        self._queue_report(group_name, trade.received_at)
+        return True
+
+    def _finalize_closed(self, trade: TradeRecord) -> bool:
+        """סוגר רשומה ב-DB לפי העסקה בפועל אצל הברוקר."""
+        deal = self.broker.closed_deal(trade.ticket)
+        if deal is None:
+            return False
+        reason = deal.reason.value
+        if trade.sl_moved_to_be and deal.reason in {CloseReason.SL, CloseReason.UNKNOWN}:
+            if (
+                trade.entry_price is not None
+                and abs(deal.exit_price - trade.entry_price) <= self.cfg.pip_size
+            ):
+                reason = CloseReason.BREAKEVEN.value
+        trade.exit_time = deal.exit_time
+        trade.exit_price = deal.exit_price
+        trade.profit = deal.profit
+        trade.close_reason = reason
+        trade.status = TradeStatus.CLOSED.value
+        if trade.entry_price is not None:
+            trade.pips = pips_from_prices(
+                trade.side, trade.entry_price, deal.exit_price, self.cfg.pip_size
+            )
+        self.db.update_trade(trade)
+        _LOG.info("Closed ticket %s reason=%s profit=%s", trade.ticket, reason, deal.profit)
+        self._queue_report(trade.group_name, trade.received_at)
+        if trade.tp_index == self.cfg.breakeven_after_tp and reason == CloseReason.TP.value:
+            self._move_stops_to_entry(trade.signal_id)
+        return True
 
     def _run(self) -> None:
         last_sched = 0.0
+        last_guard = 0.0
         while not self._stop.is_set():
             try:
                 item = self._q.get(timeout=0.2)
@@ -104,6 +228,12 @@ class TradingEngine:
             except Exception:
                 _LOG.exception("monitor failed")
             now = time.monotonic()
+            if now - last_guard >= self.cfg.guard_interval_seconds:
+                last_guard = now
+                try:
+                    self._guard_positions()
+                except Exception:
+                    _LOG.exception("guard failed")
             if now - last_sched >= 20:
                 last_sched = now
                 try:
@@ -129,13 +259,32 @@ class TradingEngine:
             self.alert(f"דולג איתות מ-{item.group.name}: כבר יש איתות פתוח.", None)
             return
 
+        # שורות ה-TP הראשונות מדולגות לחלוטין. המספור נשאר לפי השורה במקור,
+        # כך ש-breakeven_after_tp=3 ממשיך להתייחס לשורה השלישית בהודעה.
+        tradable = [
+            (index, price)
+            for index, price in enumerate(item.parsed.tps, start=1)
+            if index > self.cfg.skip_first_tps
+        ]
+        if not tradable:
+            rec = _new_signal(signal_id, item, symbol, SignalStatus.SKIPPED.value, "no_tp_after_skip")
+            self.db.insert_signal(rec)
+            self._queue_report(item.group.name, received)
+            _LOG.warning(
+                "Signal %s has %s TP lines, all within the skipped first %s",
+                signal_id,
+                len(item.parsed.tps),
+                self.cfg.skip_first_tps,
+            )
+            return
+
         rec = _new_signal(signal_id, item, symbol, SignalStatus.ACTIVE.value, "")
         self.db.insert_signal(rec)
 
         magic = item.group.magic or self.cfg.magic_number
         # --- EXECUTE FIRST, persist after each fill ---
         any_ok = False
-        for index, tp_price in enumerate(item.parsed.tps, start=1):
+        for index, tp_price in tradable:
             comment = f"GS|{item.group.name[:8]}|T{index}"[:31]
             result = None
             attempts = self.cfg.order_retries + 1
@@ -219,17 +368,37 @@ class TradingEngine:
             self.alert(f"כל הפקודות נכשלו לאיתות {signal_id}", None)
         else:
             self._safety_due[signal_id] = time.monotonic() + self.cfg.safety_delay_seconds
-            _LOG.info("Executed signal %s with %s TPs", signal_id, len(item.parsed.tps))
+            _LOG.info(
+                "Executed signal %s: %s positions (TP%s..TP%s), skipped first %s of %s lines",
+                signal_id,
+                len(tradable),
+                tradable[0][0],
+                tradable[-1][0],
+                self.cfg.skip_first_tps,
+                len(item.parsed.tps),
+            )
 
         self._queue_report(item.group.name, received)
 
-    def _live_positions(self) -> dict:
+    def _magics(self) -> set[int]:
         magics = {self.cfg.magic_number}
         for group in self.cfg.groups:
             magics.add(group.magic or self.cfg.magic_number)
+        return magics
+
+    def _group_for_magic(self, magic: int) -> Optional[GroupConfig]:
+        for group in self.cfg.groups:
+            if (group.magic or self.cfg.magic_number) == magic:
+                return group
+        return None
+
+    def _positions_by_magic(self) -> dict[int, list]:
+        return {magic: list(self.broker.positions(magic)) for magic in self._magics()}
+
+    def _live_positions(self) -> dict:
         live = {}
-        for magic in magics:
-            for pos in self.broker.positions(magic):
+        for positions in self._positions_by_magic().values():
+            for pos in positions:
                 live[pos.ticket] = pos
         return live
 
@@ -241,35 +410,9 @@ class TradingEngine:
         live_tickets = set(live)
 
         for trade in open_trades:
-            if trade.ticket is None:
+            if trade.ticket is None or trade.ticket in live_tickets:
                 continue
-            if trade.ticket in live_tickets:
-                continue
-            deal = self.broker.closed_deal(trade.ticket)
-            if deal is None:
-                continue
-            reason = deal.reason.value
-            if trade.sl_moved_to_be and deal.reason in {CloseReason.SL, CloseReason.UNKNOWN}:
-                if trade.entry_price is not None and abs(deal.exit_price - trade.entry_price) <= self.cfg.pip_size:
-                    reason = CloseReason.BREAKEVEN.value
-            trade.exit_time = deal.exit_time
-            trade.exit_price = deal.exit_price
-            trade.profit = deal.profit
-            trade.close_reason = reason
-            trade.status = TradeStatus.CLOSED.value
-            if trade.entry_price is not None:
-                trade.pips = pips_from_prices(
-                    trade.side, trade.entry_price, deal.exit_price, self.cfg.pip_size
-                )
-            self.db.update_trade(trade)
-            _LOG.info("Closed ticket %s reason=%s profit=%s", trade.ticket, reason, deal.profit)
-            self._queue_report(trade.group_name, trade.received_at)
-
-            if (
-                trade.tp_index == self.cfg.breakeven_after_tp
-                and reason == CloseReason.TP.value
-            ):
-                self._move_stops_to_entry(trade.signal_id)
+            self._finalize_closed(trade)
 
         self._maybe_breakeven_by_price(open_trades)
         self._complete_if_done(open_trades)
@@ -385,6 +528,50 @@ class TradingEngine:
             else:
                 _LOG.error("Safety modify failed ticket=%s", trade.ticket)
 
+    def _guard_positions(self) -> None:
+        """שומר בלתי תלוי באסטרטגיה: אף פוזיציה חיה לא נשארת בלי SL ו-TP.
+
+        רץ על כל פוזיציה שנושאת magic שלנו, כולל כאלה שאינן ב-DB, ולא תלוי
+        בשום לוגיקת איתות. זו רשת הביטחון האחרונה.
+        """
+        for pos in self._live_positions().values():
+            missing_sl = not pos.sl
+            missing_tp = not pos.tp
+            if not missing_sl and not missing_tp:
+                self._guarded.discard(int(pos.ticket))
+                continue
+            trade = self.db.trade_by_ticket(pos.ticket)
+            fallback_sl, fallback_tp = safety_levels(
+                pos.side.value, pos.price_open, self.cfg.safety_pips, self.cfg.pip_size
+            )
+            # מעדיפים את הרמות המקוריות של האיתות, ונופלים ל-50 פיפס רק אם אין.
+            new_sl = pos.sl
+            new_tp = pos.tp
+            if missing_sl:
+                new_sl = (trade.sl if trade and trade.sl else 0.0) or fallback_sl
+            if missing_tp:
+                new_tp = (trade.tp_price if trade and trade.tp_price else 0.0) or fallback_tp
+
+            if not self.broker.modify_sl_tp(pos.ticket, sl=new_sl, tp=new_tp):
+                _LOG.error("Guard failed to set SL/TP on ticket=%s", pos.ticket)
+                continue
+            _LOG.warning(
+                "Guard set SL/TP ticket=%s sl=%s tp=%s (missing sl=%s tp=%s)",
+                pos.ticket,
+                new_sl,
+                new_tp,
+                missing_sl,
+                missing_tp,
+            )
+            if trade is not None:
+                trade.sl = new_sl
+                if missing_tp:
+                    trade.tp_price = new_tp
+                self.db.update_trade(trade)
+            if int(pos.ticket) not in self._guarded:
+                self._guarded.add(int(pos.ticket))
+                self.alert(f"מנגנון הגנה הוסיף SL/TP לפוזיציה {pos.ticket}", None)
+
     def _queue_report(self, group_name: str, when: datetime) -> None:
         self._report_q.put((group_name, when))
 
@@ -477,6 +664,21 @@ class TradingEngine:
 
 def iso_now() -> str:
     return utcnow().isoformat()
+
+
+def _parse_trade_comment(comment: str) -> tuple[Optional[str], Optional[int]]:
+    """הערת העסקה נכתבת כ-GS|<group>|T<index> ומאפשרת לשחזר שיוך אחרי קריסה."""
+    if not comment:
+        return None, None
+    parts = str(comment).split("|")
+    if len(parts) < 3 or parts[0] != "GS":
+        return None, None
+    group = parts[1].strip() or None
+    index = None
+    token = parts[2].strip().upper()
+    if token.startswith("T") and token[1:].isdigit():
+        index = int(token[1:])
+    return group, index
 
 
 def _signal_id(item: IncomingSignal) -> str:

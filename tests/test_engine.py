@@ -8,7 +8,7 @@ from src.brokers.dry_run import DryRunBroker
 from src.config import AppConfig
 from src.db import Database
 from src.excel_report import ExcelReporter
-from src.models import CloseReason, GroupConfig
+from src.models import CloseReason, GroupConfig, Side
 from src.parser import parse_signal
 from src.trade_manager import IncomingSignal, TradingEngine
 
@@ -53,9 +53,11 @@ def _cfg(tmp: Path) -> AppConfig:
         telegram_phone="",
         symbol_override="",
         max_concurrent_signals=1,
+        skip_first_tps=2,
         breakeven_after_tp=3,
         safety_delay_seconds=5,
         safety_pips=50,
+        guard_interval_seconds=5,
         pip_size=0.1,
         magic_number=260908,
         deviation=30,
@@ -108,9 +110,11 @@ def test_execute_then_persist(tmp_path: Path):
     signals = db.active_signals()
     assert len(signals) == 1
     trades = db.trades_for_signal(signals[0].id)
-    assert len(trades) == 6
+    # שתי שורות ה-TP הראשונות מדולגות, המספור נשאר לפי השורה במקור.
+    assert len(trades) == 4
     assert all(t.status == "open" and t.ticket for t in trades)
-    assert [t.tp_index for t in trades] == [1, 2, 3, 4, 5, 6]
+    assert [t.tp_index for t in trades] == [3, 4, 5, 6]
+    assert [t.tp_price for t in trades] == [4305.0, 4300.0, 4295.0, 4285.0]
     assert broker.positions(engine.cfg.magic_number)
     path = engine._write_excel(group.name, datetime.now(timezone.utc), final=False)
     assert path and Path(path).exists()
@@ -139,6 +143,7 @@ def test_tp3_moves_remaining_stops_to_entry(tmp_path: Path):
     engine._monitor()
     remaining = [t for t in db.trades_for_signal(sid) if t.status == "open"]
     assert len(remaining) == 3
+    assert [t.tp_index for t in remaining] == [4, 5, 6]
     assert all(t.sl_moved_to_be for t in remaining)
     assert all(t.sl == t.entry_price for t in remaining)
 
@@ -184,5 +189,89 @@ def test_excel_files_are_isolated_per_group(tmp_path: Path):
     names_b = {book_b.cell(row, 1).value for row in range(2, book_b.max_row + 1)}
     assert names_a == {"group_a"}
     assert names_b == {"group_b"}
-    assert book_a.max_row == 7
-    assert book_b.max_row == 7
+    assert book_a.max_row == 5
+    assert book_b.max_row == 5
+
+
+def test_skips_signal_when_all_tp_lines_are_skipped(tmp_path: Path):
+    engine, db, broker = _engine(tmp_path)
+    group = engine.cfg.groups[0]
+    short = "#XAUUSD SELL 4315-4318\nTP 4312\nTP 4309\nSL 4327\n"
+    engine._handle(_incoming(short, group, 77))
+    assert db.active_signals() == []
+    assert broker.positions(engine.cfg.magic_number) == []
+    window = (datetime(2020, 1, 1, tzinfo=timezone.utc), datetime(2030, 1, 1, tzinfo=timezone.utc))
+    signals = db.signals_in_range(group.name, *window)
+    assert [s.skipped_reason for s in signals] == ["no_tp_after_skip"]
+
+
+def test_guard_forces_sl_tp_on_any_position(tmp_path: Path):
+    engine, db, broker = _engine(tmp_path)
+    group = engine.cfg.groups[0]
+    engine._handle(_incoming(SELL, group, 5))
+    for trade in db.open_trades():
+        broker.modify_sl_tp(trade.ticket, sl=0.0, tp=0.0)
+
+    engine._guard_positions()
+
+    for pos in broker.positions(engine.cfg.magic_number):
+        assert pos.sl != 0 and pos.tp != 0
+
+
+def test_guard_protects_position_missing_from_db(tmp_path: Path):
+    engine, _db, broker = _engine(tmp_path)
+    # פוזיציה שנפתחה אך לא הספיקה להיכתב ל-DB לפני קריסה.
+    result = broker.market_order(
+        symbol="XAUUSD",
+        side=Side.SELL,
+        volume=0.01,
+        sl=0.0,
+        tp=0.0,
+        comment="GS|group_a|T4",
+        deviation=30,
+        magic=engine.cfg.magic_number,
+    )
+    engine._guard_positions()
+    pos = {p.ticket: p for p in broker.positions(engine.cfg.magic_number)}[result.ticket]
+    delta = engine.cfg.safety_pips * engine.cfg.pip_size
+    assert abs(pos.sl - (pos.price_open + delta)) < 1e-6
+    assert abs(pos.tp - (pos.price_open - delta)) < 1e-6
+
+
+def test_recovery_closes_trades_that_ended_while_down(tmp_path: Path):
+    engine, db, broker = _engine(tmp_path)
+    group = engine.cfg.groups[0]
+    engine._handle(_incoming(SELL, group, 6))
+    gone = db.open_trades()[0]
+    broker.simulate_close(gone.ticket, CloseReason.TP, exit_price=gone.tp_price, profit=12)
+
+    # מדמים הפעלה מחדש: אותו DB, מנוע חדש.
+    engine._be_done.clear()
+    engine._recover()
+
+    restored = db.trade_by_ticket(gone.ticket)
+    assert restored.status == "closed"
+    assert restored.close_reason == CloseReason.TP.value
+    assert restored.profit == 12
+
+
+def test_recovery_adopts_orphan_position(tmp_path: Path):
+    engine, db, broker = _engine(tmp_path)
+    result = broker.market_order(
+        symbol="XAUUSD",
+        side=Side.BUY,
+        volume=0.01,
+        sl=4300.0,
+        tp=4360.0,
+        comment="GS|group_b|T5",
+        deviation=30,
+        magic=engine.cfg.magic_number,
+    )
+    engine._recover()
+
+    adopted = db.trade_by_ticket(result.ticket)
+    assert adopted is not None
+    assert adopted.status == "open"
+    assert adopted.group_name == "group_b"
+    assert adopted.tp_index == 5
+    assert adopted.entry_price == result.fill_price

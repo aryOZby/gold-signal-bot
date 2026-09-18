@@ -27,9 +27,11 @@ class AppConfig:
     telegram_phone: str
     symbol_override: str
     max_concurrent_signals: int
+    skip_first_tps: int
     breakeven_after_tp: int
     safety_delay_seconds: float
     safety_pips: float
+    guard_interval_seconds: float
     pip_size: float
     magic_number: int
     deviation: int
@@ -133,9 +135,11 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
         telegram_phone=phone,
         symbol_override=str(trading.get("symbol_override") or "").strip(),
         max_concurrent_signals=int(trading.get("max_concurrent_signals") or 1),
+        skip_first_tps=max(0, int(trading.get("skip_first_tps", 2) or 0)),
         breakeven_after_tp=int(trading.get("breakeven_after_tp") or 3),
         safety_delay_seconds=float(trading.get("safety_delay_seconds") or 5),
         safety_pips=float(trading.get("safety_pips") or 50),
+        guard_interval_seconds=float(trading.get("guard_interval_seconds") or 5),
         pip_size=float(trading.get("pip_size") or 0.1),
         magic_number=int(trading.get("magic_number") or 260908),
         deviation=int(trading.get("deviation") or 30),

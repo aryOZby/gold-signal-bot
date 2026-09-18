@@ -17,9 +17,15 @@ telegram:
 trading:
   symbol_override: ""
   max_concurrent_signals: 1
+  # מדלגים על שתי שורות ה-TP הראשונות ולא נכנסים בהן בכלל.
+  # המספור נשמר לפי מספר השורה במקור, כך ש-TP3 נשאר TP3 בדוחות.
+  skip_first_tps: 2
+  # קידום כל הסטופים לנקודת הכניסה אחרי נגיעה ב-TP של שורה 3.
   breakeven_after_tp: 3
   safety_delay_seconds: 5
   safety_pips: 50
+  # שומר בלתי תלוי באסטרטגיה: כל כמה שניות לסרוק פוזיציות ולכפות SL/TP.
+  guard_interval_seconds: 5
   pip_size: 0.1
   magic_number: 260908
   deviation: 30
