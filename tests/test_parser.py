@@ -57,6 +57,46 @@ def test_parse_messy_whitespace_and_dashes():
     assert sig.sl == 4337
 
 
+PLAN_SELL = """XAUUSD SELL PLAN @4365_4368
+
+tp @4349
+tp @4335
+
+SL@4381
+"""
+
+PLAN_BUY = """XAUUSD BUY PLAN @4397_4395
+
+tp @4418
+tp @4444
+
+SL@4381
+"""
+
+
+def test_parse_plan_sell_template():
+    sig = parse_signal(PLAN_SELL)
+    assert sig is not None
+    assert sig.symbol == "XAUUSD"
+    assert sig.side is Side.SELL
+    assert sig.zone_low == 4365
+    assert sig.zone_high == 4368
+    assert sig.tps == (4349, 4335)
+    assert sig.sl == 4381
+    assert sig.tp_count == 2
+
+
+def test_parse_plan_buy_template():
+    sig = parse_signal(PLAN_BUY)
+    assert sig is not None
+    assert sig.side is Side.BUY
+    assert sig.zone_low == 4395
+    assert sig.zone_high == 4397
+    assert sig.tps == (4418, 4444)
+    assert sig.sl == 4381
+
+
 def test_ignore_non_signal():
     assert parse_signal("good morning") is None
     assert parse_signal("#XAUUSD SELL 4315-4318\nTP 4312") is None  # no SL
+    assert parse_signal("XAUUSD SELL PLAN @4365_4368\ntp @4349") is None  # no SL

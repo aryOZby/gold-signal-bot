@@ -22,14 +22,22 @@ _DASHES = str.maketrans(
     }
 )
 
+# שתי התבניות הנתמכות:
+#   #XAUUSD SELL 4315-4318   /  TP 4312      /  SL 4327
+#   XAUUSD SELL PLAN @4365_4368  /  tp @4349  /  SL@4381
 _HEADER = re.compile(
     r"^#?\s*(?P<symbol>[A-Za-z0-9._]+)\s+"
-    r"(?P<side>BUY|SELL)\s+"
-    r"(?P<low>\d+(?:\.\d+)?)\s*-\s*(?P<high>\d+(?:\.\d+)?)\s*$",
+    r"(?P<side>BUY|SELL)"
+    r"(?:\s+PLAN)?\s+"
+    r"@?(?P<low>\d+(?:\.\d+)?)\s*[-_]\s*@?(?P<high>\d+(?:\.\d+)?)\s*$",
     re.IGNORECASE,
 )
-_TP = re.compile(r"^T(?:P|ake\s*Profit)\s*:?\s*(?P<price>\d+(?:\.\d+)?)\s*$", re.IGNORECASE)
-_SL = re.compile(r"^S(?:L|top(?:\s*Loss)?)\s*:?\s*(?P<price>\d+(?:\.\d+)?)\s*$", re.IGNORECASE)
+_TP = re.compile(
+    r"^T(?:P|ake\s*Profit)\s*[:@]?\s*@?(?P<price>\d+(?:\.\d+)?)\s*$", re.IGNORECASE
+)
+_SL = re.compile(
+    r"^S(?:L|top(?:\s*Loss)?)\s*[:@]?\s*@?(?P<price>\d+(?:\.\d+)?)\s*$", re.IGNORECASE
+)
 
 
 def _normalize(text: str) -> str:

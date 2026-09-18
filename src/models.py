@@ -55,6 +55,9 @@ class GroupConfig:
     lot: float
     username: str = ""
     magic: int = 0
+    # אסטרטגיה פר-קבוצה. None = לקחת את ברירת המחדל הגלובלית מ-trading.
+    skip_first_tps: Optional[int] = None
+    breakeven_after_tp: Optional[int] = None
 
 
 @dataclass

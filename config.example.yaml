@@ -4,14 +4,26 @@ dry_run: true
 telegram:
   session_name: gold_signal_bot
   groups:
+    # אסטרטגיה א': מדלגים על 2 שורות TP, קידום סטופים אחרי שורה 3.
     - name: group_a
       chat_id: -2001216034
       lot: 0.01
       magic: 260908
+      skip_first_tps: 2
+      breakeven_after_tp: 3
     - name: TechnicalPips6273
       username: TechnicalPips6273
       lot: 0.01
       magic: 260909
+      skip_first_tps: 2
+      breakeven_after_tp: 3
+    # אסטרטגיה ב': נכנסים בכל שורות ה-TP, קידום סטופים כבר אחרי הראשונה.
+    # - name: group_c
+    #   username: SomeOtherGroup
+    #   lot: 0.01
+    #   magic: 260910
+    #   skip_first_tps: 0
+    #   breakeven_after_tp: 1
   admin_chat_id: 0
 
 trading:

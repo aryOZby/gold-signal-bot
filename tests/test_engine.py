@@ -255,6 +255,72 @@ def test_recovery_closes_trades_that_ended_while_down(tmp_path: Path):
     assert restored.profit == 12
 
 
+PLAN_SELL = """XAUUSD SELL PLAN @4365_4368
+
+tp @4349
+tp @4335
+
+SL@4381
+"""
+
+
+def test_plan_template_group_enters_every_tp(tmp_path: Path):
+    engine, db, _broker = _engine(tmp_path)
+    plan_group = GroupConfig(
+        "plan_group", -1003, 0.01, magic=260910, skip_first_tps=0, breakeven_after_tp=1
+    )
+    engine.cfg.groups.append(plan_group)
+
+    engine._handle(_incoming(PLAN_SELL, plan_group, 90))
+
+    sid = db.active_signals()[0].id
+    trades = db.trades_for_signal(sid)
+    assert [t.tp_index for t in trades] == [1, 2]
+    assert [t.tp_price for t in trades] == [4349.0, 4335.0]
+    assert all(t.sl == 4381.0 for t in trades)
+
+
+def test_plan_group_moves_stops_after_first_tp(tmp_path: Path):
+    engine, db, broker = _engine(tmp_path)
+    plan_group = GroupConfig(
+        "plan_group", -1003, 0.01, magic=260910, skip_first_tps=0, breakeven_after_tp=1
+    )
+    engine.cfg.groups.append(plan_group)
+    engine._handle(_incoming(PLAN_SELL, plan_group, 91))
+    sid = db.active_signals()[0].id
+
+    first = next(t for t in db.trades_for_signal(sid) if t.tp_index == 1)
+    broker.simulate_close(first.ticket, CloseReason.TP, exit_price=first.tp_price, profit=5)
+    engine._monitor()
+
+    remaining = [t for t in db.trades_for_signal(sid) if t.status == "open"]
+    assert len(remaining) == 1
+    assert remaining[0].tp_index == 2
+    assert remaining[0].sl_moved_to_be
+    assert remaining[0].sl == remaining[0].entry_price
+
+
+def test_two_groups_keep_separate_strategies(tmp_path: Path):
+    engine, db, broker = _engine(tmp_path)
+    skip_group = engine.cfg.groups[0]
+    plan_group = GroupConfig(
+        "plan_group", -1003, 0.01, magic=260910, skip_first_tps=0, breakeven_after_tp=1
+    )
+    engine.cfg.groups.append(plan_group)
+
+    engine._handle(_incoming(SELL, skip_group, 92))
+    sid_a = db.active_signals()[0].id
+    for trade in db.trades_for_signal(sid_a):
+        broker.simulate_close(trade.ticket, CloseReason.TP, exit_price=trade.tp_price, profit=1)
+    engine._monitor()
+
+    engine._handle(_incoming(PLAN_SELL, plan_group, 93))
+    sid_b = db.active_signals()[0].id
+
+    assert [t.tp_index for t in db.trades_for_signal(sid_a)] == [3, 4, 5, 6]
+    assert [t.tp_index for t in db.trades_for_signal(sid_b)] == [1, 2]
+
+
 def test_recovery_adopts_orphan_position(tmp_path: Path):
     engine, db, broker = _engine(tmp_path)
     result = broker.market_order(

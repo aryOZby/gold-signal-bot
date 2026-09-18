@@ -204,7 +204,10 @@ class TradingEngine:
         self.db.update_trade(trade)
         _LOG.info("Closed ticket %s reason=%s profit=%s", trade.ticket, reason, deal.profit)
         self._queue_report(trade.group_name, trade.received_at)
-        if trade.tp_index == self.cfg.breakeven_after_tp and reason == CloseReason.TP.value:
+        if (
+            trade.tp_index == self._breakeven_after_tp(trade.group_name)
+            and reason == CloseReason.TP.value
+        ):
             self._move_stops_to_entry(trade.signal_id)
         return True
 
@@ -261,10 +264,11 @@ class TradingEngine:
 
         # שורות ה-TP הראשונות מדולגות לחלוטין. המספור נשאר לפי השורה במקור,
         # כך ש-breakeven_after_tp=3 ממשיך להתייחס לשורה השלישית בהודעה.
+        skip_first = self._skip_first_tps(item.group)
         tradable = [
             (index, price)
             for index, price in enumerate(item.parsed.tps, start=1)
-            if index > self.cfg.skip_first_tps
+            if index > skip_first
         ]
         if not tradable:
             rec = _new_signal(signal_id, item, symbol, SignalStatus.SKIPPED.value, "no_tp_after_skip")
@@ -274,7 +278,7 @@ class TradingEngine:
                 "Signal %s has %s TP lines, all within the skipped first %s",
                 signal_id,
                 len(item.parsed.tps),
-                self.cfg.skip_first_tps,
+                skip_first,
             )
             return
 
@@ -374,7 +378,7 @@ class TradingEngine:
                 len(tradable),
                 tradable[0][0],
                 tradable[-1][0],
-                self.cfg.skip_first_tps,
+                skip_first,
                 len(item.parsed.tps),
             )
 
@@ -385,6 +389,20 @@ class TradingEngine:
         for group in self.cfg.groups:
             magics.add(group.magic or self.cfg.magic_number)
         return magics
+
+    def _group_by_name(self, name: str) -> Optional[GroupConfig]:
+        return next((g for g in self.cfg.groups if g.name == name), None)
+
+    def _skip_first_tps(self, group: Optional[GroupConfig]) -> int:
+        if group is not None and group.skip_first_tps is not None:
+            return group.skip_first_tps
+        return self.cfg.skip_first_tps
+
+    def _breakeven_after_tp(self, group_name: str) -> int:
+        group = self._group_by_name(group_name)
+        if group is not None and group.breakeven_after_tp is not None:
+            return group.breakeven_after_tp
+        return self.cfg.breakeven_after_tp
 
     def _group_for_magic(self, magic: int) -> Optional[GroupConfig]:
         for group in self.cfg.groups:
@@ -426,15 +444,16 @@ class TradingEngine:
         for signal_id, group in by_signal.items():
             if signal_id in self._be_done:
                 continue
-            tp3 = next((t for t in group if t.tp_index == self.cfg.breakeven_after_tp), None)
+            trigger = self._breakeven_after_tp(group[0].group_name)
+            tp3 = next((t for t in group if t.tp_index == trigger), None)
             if tp3 is None:
-                # still check closed TP3 via DB
+                # still check the closed trigger leg via DB
                 all_trades = self.db.trades_for_signal(signal_id)
                 closed_tp3 = next(
                     (
                         t
                         for t in all_trades
-                        if t.tp_index == self.cfg.breakeven_after_tp
+                        if t.tp_index == trigger
                         and t.close_reason == CloseReason.TP.value
                     ),
                     None,

@@ -95,6 +95,8 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
         if not chat_id and not username:
             raise ValueError(f"Group {name} needs chat_id or username")
         magic = int(item.get("magic") or (default_magic + len(groups)))
+        skip = item.get("skip_first_tps")
+        be_after = item.get("breakeven_after_tp")
         groups.append(
             GroupConfig(
                 name=name,
@@ -102,6 +104,8 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
                 lot=float(item.get("lot", default_lot)),
                 username=username,
                 magic=magic,
+                skip_first_tps=None if skip is None else max(0, int(skip)),
+                breakeven_after_tp=None if be_after is None else max(1, int(be_after)),
             )
         )
     if len(groups) < 1:
