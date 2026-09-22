@@ -116,6 +116,38 @@ def patch_config(path: Path, updates: dict[str, int]) -> list[str]:
     return changed
 
 
+def show_matches(rows: list[dict], needle: str) -> None:
+    matches = best_matches(rows, needle)
+    if not matches:
+        print("   לא נמצאה התאמה. נסה מילה אחת בלבד מתוך השם.\n")
+        return
+    for rank, (points, row) in enumerate(matches, start=1):
+        mark = "*" if rank == 1 else " "
+        user = f"@{row['username']}" if row["username"] else ""
+        print(f" {mark} {row['id']:>16}  {points:.2f}  {user:<26} {row['title']}")
+    print()
+
+
+def interactive(rows: list[dict], cfg) -> None:
+    print("קבוצות שכבר מוגדרות ב-config.yaml:")
+    for group in cfg.groups:
+        target = group.chat_id or (f"@{group.username}" if group.username else "?")
+        print(f"   {group.name:<24} {target}")
+    print()
+    print("הקלד שם קבוצה לחיפוש. אפשר באנגלית פשוטה גם אם בטלגרם השם מעוצב.")
+    print("Enter ריק מסיים.\n")
+    while True:
+        try:
+            needle = input("חפש> ").strip()
+        except EOFError:
+            break
+        if not needle:
+            break
+        show_matches(rows, needle)
+    print("סיום. להזרקה אוטומטית ל-config.yaml הרץ:")
+    print('   py scripts\\find_groups.py --apply "<שם_בקונפיג>=<חיפוש>"')
+
+
 async def run(terms: list[str], apply: bool) -> int:
     cfg = load_config()
     if not cfg.telegram_api_id or not cfg.telegram_api_hash:
@@ -128,6 +160,10 @@ async def run(terms: list[str], apply: bool) -> int:
     rows = await collect_dialogs(client)
     await client.disconnect()
     print(f"נסרקו {len(rows)} קבוצות וערוצים.\n")
+
+    if not terms:
+        interactive(rows, cfg)
+        return 0
 
     resolved: dict[str, int] = {}
     for term in terms:
@@ -143,15 +179,8 @@ async def run(terms: list[str], apply: bool) -> int:
         matches = best_matches(rows, needle)
         label = f"{config_name} <- '{needle}'" if config_name else f"'{needle}'"
         print(f"=== {label} ===")
-        if not matches:
-            print("   לא נמצאה התאמה.\n")
-            continue
-        for rank, (points, row) in enumerate(matches, start=1):
-            mark = "*" if rank == 1 else " "
-            user = f"@{row['username']}" if row["username"] else ""
-            print(f" {mark} {row['id']:>16}  {points:.2f}  {user:<26} {row['title']}")
-        print()
-        if config_name:
+        show_matches(rows, needle)
+        if config_name and matches:
             resolved[config_name] = matches[0][1]["id"]
 
     if not apply:
@@ -180,7 +209,11 @@ async def run(terms: list[str], apply: bool) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Resolve exact Telegram chat ids by name")
-    parser.add_argument("terms", nargs="+", help="שם לחיפוש, או <שם_בקונפיג>=<חיפוש> עם --apply")
+    parser.add_argument(
+        "terms",
+        nargs="*",
+        help="שם לחיפוש, או <שם_בקונפיג>=<חיפוש> עם --apply. בלי ארגומנטים נכנסים למצב אינטראקטיבי",
+    )
     parser.add_argument("--apply", action="store_true", help="כתוב את התוצאות ל-config.yaml")
     args = parser.parse_args()
     try:
