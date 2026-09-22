@@ -321,6 +321,109 @@ def test_two_groups_keep_separate_strategies(tmp_path: Path):
     assert [t.tp_index for t in db.trades_for_signal(sid_b)] == [1, 2]
 
 
+def _production_groups() -> list[GroupConfig]:
+    """בדיוק מה שנכנס ל-config.yaml בשרת."""
+    return [
+        GroupConfig("group_a", -1002001216034, 0.01, magic=260908,
+                    skip_first_tps=2, breakeven_after_tp=3),
+        GroupConfig("TechnicalPips6273", -1001569906975, 0.01,
+                    username="TechnicalPips6273", magic=260909,
+                    skip_first_tps=2, breakeven_after_tp=3),
+        GroupConfig("profit_kings", -1002984909577, 0.01,
+                    username="profitkingscalper_007", magic=260910,
+                    skip_first_tps=0, breakeven_after_tp=1),
+    ]
+
+
+def test_production_config_end_to_end(tmp_path: Path):
+    """שלוש הקבוצות, שתי התבניות, שתי האסטרטגיות, ודוח נפרד לכל קבוצה."""
+    from openpyxl import load_workbook
+
+    engine, db, broker = _engine(tmp_path)
+    engine.cfg.groups = _production_groups()
+    vip, pips, kings = engine.cfg.groups
+
+    # אסטרטגיה א' על התבנית הישנה: 6 שורות TP -> 4 פוזיציות, החל מ-TP3.
+    engine._handle(_incoming(SELL, vip, 101))
+    sid_vip = db.active_signals()[0].id
+    vip_trades = db.trades_for_signal(sid_vip)
+    assert [t.tp_index for t in vip_trades] == [3, 4, 5, 6]
+    assert all(t.sl == 4327.0 for t in vip_trades)
+    assert all(t.side == "SELL" for t in vip_trades)
+
+    # נגיעה ב-TP3 מקדמת את כל הסטופים לנקודת הכניסה.
+    tp3 = next(t for t in vip_trades if t.tp_index == 3)
+    broker.simulate_close(tp3.ticket, CloseReason.TP, exit_price=tp3.tp_price, profit=4)
+    engine._monitor()
+    still_open = [t for t in db.trades_for_signal(sid_vip) if t.status == "open"]
+    assert [t.tp_index for t in still_open] == [4, 5, 6]
+    assert all(t.sl_moved_to_be and t.sl == t.entry_price for t in still_open)
+
+    for trade in still_open:
+        broker.simulate_close(trade.ticket, CloseReason.TP, exit_price=trade.tp_price, profit=6)
+    engine._monitor()
+
+    # אסטרטגיה ב' על תבנית ה-PLAN: 2 שורות TP -> 2 פוזיציות, החל מ-TP1.
+    engine._handle(_incoming(PLAN_SELL, kings, 102))
+    sid_kings = db.active_signals()[0].id
+    king_trades = db.trades_for_signal(sid_kings)
+    assert [t.tp_index for t in king_trades] == [1, 2]
+    assert all(t.sl == 4381.0 for t in king_trades)
+
+    first = next(t for t in king_trades if t.tp_index == 1)
+    broker.simulate_close(first.ticket, CloseReason.TP, exit_price=first.tp_price, profit=3)
+    engine._monitor()
+    king_open = [t for t in db.trades_for_signal(sid_kings) if t.status == "open"]
+    assert [t.tp_index for t in king_open] == [2]
+    assert king_open[0].sl_moved_to_be
+
+    # קבוצה שלישית שלא נסחרה בכלל לא מייצרת רעש בדוחות.
+    now = datetime.now(timezone.utc)
+    paths = {g.name: Path(engine._write_excel(g.name, now, final=False)) for g in (vip, pips, kings)}
+    assert len({p.resolve() for p in paths.values()}) == 3
+    assert paths["group_a"].parent.name == "group_a"
+    assert paths["profit_kings"].parent.name == "profit_kings"
+
+    sheet_vip = load_workbook(paths["group_a"])["עסקאות"]
+    sheet_kings = load_workbook(paths["profit_kings"])["עסקאות"]
+    assert {sheet_vip.cell(r, 1).value for r in range(2, sheet_vip.max_row + 1)} == {"group_a"}
+    assert {sheet_kings.cell(r, 1).value for r in range(2, sheet_kings.max_row + 1)} == {"profit_kings"}
+    assert sheet_vip.max_row == 5      # 4 עסקאות + כותרת
+    assert sheet_kings.max_row == 3    # 2 עסקאות + כותרת
+
+    # קבוצה בלי פעילות מקבלת קובץ עם כותרת בלבד.
+    sheet_pips = load_workbook(paths["TechnicalPips6273"])["עסקאות"]
+    assert sheet_pips.max_row == 1
+
+
+def test_data_survives_restart(tmp_path: Path):
+    """אחרי קריסה, המידע נשאר ב-DB והדוח נבנה מחדש ממנו."""
+    from openpyxl import load_workbook
+
+    engine, db, broker = _engine(tmp_path)
+    engine.cfg.groups = _production_groups()
+    vip = engine.cfg.groups[0]
+    engine._handle(_incoming(SELL, vip, 201))
+
+    # העסקאות נסגרות בזמן שהבוט למטה.
+    for trade in db.open_trades():
+        broker.simulate_close(trade.ticket, CloseReason.TP, exit_price=trade.tp_price, profit=7)
+
+    engine._recover()
+
+    closed = [t for t in db.trades_for_signal(db.signals_in_range(
+        vip.name,
+        datetime(2020, 1, 1, tzinfo=timezone.utc),
+        datetime(2030, 1, 1, tzinfo=timezone.utc),
+    )[0].id)]
+    assert len(closed) == 4
+    assert all(t.status == "closed" and t.profit == 7 for t in closed)
+
+    path = Path(engine._write_excel(vip.name, datetime.now(timezone.utc), final=False))
+    sheet = load_workbook(path)["עסקאות"]
+    assert sheet.max_row == 5
+
+
 def test_recovery_adopts_orphan_position(tmp_path: Path):
     engine, db, broker = _engine(tmp_path)
     result = broker.market_order(
