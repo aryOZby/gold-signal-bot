@@ -95,18 +95,18 @@ def report_gold_symbols() -> Optional[str]:
     return None
 
 
-def terminal_logs(tail: int = 30) -> list[str]:
+def _read_newest_journal() -> tuple[Optional[Path], list[str]]:
     """MT5 writes auth + API-rejection lines to %APPDATA%\\MetaQuotes\\Terminal\\<id>\\logs."""
     base = Path.home() / "AppData" / "Roaming" / "MetaQuotes" / "Terminal"
     if not base.exists():
-        return ["  לא נמצאה תיקיית לוגים של MetaQuotes"]
+        return None, []
     logs: list[Path] = []
     for folder in base.iterdir():
         log_dir = folder / "logs"
         if log_dir.is_dir():
             logs.extend(log_dir.glob("*.log"))
     if not logs:
-        return ["  לא נמצאו קבצי לוג"]
+        return None, []
     newest = max(logs, key=lambda p: p.stat().st_mtime)
     text = ""
     for encoding in ("utf-16", "utf-8", "cp1255"):
@@ -118,7 +118,42 @@ def terminal_logs(tail: int = 30) -> list[str]:
     if not text:
         text = newest.read_text(encoding="utf-8", errors="replace")
     lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+    return newest, lines
+
+
+def terminal_logs(tail: int = 30) -> list[str]:
+    newest, lines = _read_newest_journal()
+    if newest is None:
+        return ["  לא נמצאה תיקיית לוגים של MetaQuotes"]
+    if not lines:
+        return ["  לא נמצאו קבצי לוג"]
     return [f"  קובץ: {newest}"] + [f"  {ln}" for ln in lines[-tail:]]
+
+
+def journal_network_status() -> list[str]:
+    """Last broker-auth lines. Charts can look live while this says Invalid account."""
+    _newest, lines = _read_newest_journal()
+    keys = (
+        "authorized on",
+        "authorization",
+        "invalid account",
+        "disconnected",
+        "trading has been enabled",
+        "connection to",
+    )
+    hits = [
+        ln
+        for ln in lines
+        if "network" in ln.lower() and any(key in ln.lower() for key in keys)
+    ]
+    return hits[-6:]
+
+
+def broker_rejected_account(network_lines: list[str]) -> bool:
+    if not network_lines:
+        return False
+    last = network_lines[-1].lower()
+    return "invalid account" in last or ("authorization" in last and "failed" in last)
 
 
 def attempt(label: str, shutdown_first: bool = True, **kwargs) -> bool:
@@ -204,6 +239,16 @@ def main() -> None:
         if symbol_problem:
             problems.append(symbol_problem)
 
+    print("\nסטטוס חשבון בלוג MT5 (Network):")
+    network = journal_network_status()
+    for line in network or ["  אין שורות Network בלוג"]:
+        print(f"  {line}")
+    if login and network and login not in "".join(network):
+        print(
+            f"  !! .env MT5_LOGIN={login} לא מופיע בלוג. "
+            "הטרמינל מחובר לחשבון אחר — רוקן את MT5_LOGIN או התאם אותו לדמו הפתוח."
+        )
+
     print("\nלוג הטרמינל (סוף הקובץ):")
     for line in terminal_logs():
         print(line)
@@ -215,6 +260,15 @@ def main() -> None:
         print(f"החיבור עובד, אבל {len(problems)} דברים ימנעו ביצוע פקודות:")
         for num, problem in enumerate(problems, start=1):
             print(f"  {num}. {problem}")
+    elif broker_rejected_account(network):
+        print("הברוקר דחה את החשבון בטרמינל (Invalid account / authorization failed).")
+        print("Python לא יכול להתחבר לטרמינל שלא מאושר אצל השרת — גם אם הגרף נראה פתוח.")
+        print("  1. ב-MT5: File > Login to Trade Account")
+        print("     חשבון דמו תקף + סיסמת Master + השרת המדויק (למשל JustMarkets-Demo3).")
+        print("  2. Journal (Ctrl+T) חייב להראות: authorized on ... ולא Invalid account.")
+        print("  3. למטה מימין חייב להיות קצב נתונים, לא No connection.")
+        print("  4. אם הדמו הישן מת — פתח דמו חדש אצל JustMarkets והתחבר אליו.")
+        print("  5. ב-.env רוקן MT5_LOGIN / MT5_PASSWORD / MT5_SERVER (אל תשאיר מספר לייב).")
     else:
         print("נכשל. החשוד המרכזי כש-(-6) חוזר מיד (ולא IPC timeout):")
         print("  1. ב-MT5: Tools > Options > Expert Advisors")

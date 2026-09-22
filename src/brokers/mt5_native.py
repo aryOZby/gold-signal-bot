@@ -95,11 +95,14 @@ class Mt5NativeBroker(Broker):
             return
         raise RuntimeError(
             "MT5 initialize failed. בדוק לפי הסדר:\n"
-            "  1. MT5 פתוח ומחובר לחשבון מסחר (למטה מימין מופיע קצב נתונים).\n"
-            "  2. Tools > Options > Expert Advisors: לבטל את הסימון של\n"
+            "  1. Journal של MT5 (Ctrl+T): השורה האחרונה של Network חייבת להיות\n"
+            "     'authorized on ...' ולא 'Invalid account' / 'authorization failed'.\n"
+            "     גרף פתוח לא מספיק — אם הדמו נדחה, Python יקבל -6.\n"
+            "  2. File > Login to Trade Account עם דמו תקף (Master + השרת המדויק).\n"
+            "  3. Tools > Options > Expert Advisors: לבטל את הסימון של\n"
             "     'Disable automated trading via external Python API'.\n"
-            "  3. CMD ו-MT5 באותה רמת הרשאה (שניהם רגילים או שניהם כמנהל).\n"
-            "  4. או למלא MT5_LOGIN/MT5_PASSWORD/MT5_SERVER ב-.env.\n"
+            "  4. CMD ו-MT5 באותה רמת הרשאה (שניהם רגילים או שניהם כמנהל).\n"
+            "  5. רוקן MT5_LOGIN ב-.env אם הוא מספר לייב והטרמינל בדמו.\n"
             "  לאבחון מלא:  py scripts\\diag_mt5.py\n"
             f"  Last errors: {errors[-3:]}"
         )
