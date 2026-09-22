@@ -121,8 +121,9 @@ def terminal_logs(tail: int = 30) -> list[str]:
     return [f"  קובץ: {newest}"] + [f"  {ln}" for ln in lines[-tail:]]
 
 
-def attempt(label: str, **kwargs) -> bool:
-    mt5.shutdown()
+def attempt(label: str, shutdown_first: bool = True, **kwargs) -> bool:
+    if shutdown_first:
+        mt5.shutdown()
     ok = mt5.initialize(**kwargs)
     err = mt5.last_error()
     print(f"  {label}: {ok}  {err if not ok else ''}")
@@ -171,7 +172,9 @@ def main() -> None:
 
     print("\nניסיונות התחברות:")
     paths = [p for p in [env_path, *discover_terminals()] if p]
-    ok = attempt("initialize()", timeout=60000)
+    ok = attempt("initialize() attached", shutdown_first=False, timeout=60000)
+    if not ok:
+        ok = attempt("initialize()", timeout=60000)
     for path in paths:
         if ok:
             break

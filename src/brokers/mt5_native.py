@@ -53,8 +53,11 @@ class Mt5NativeBroker(Broker):
 
     def connect(self) -> None:
         errors = []
-        for kwargs in self._init_attempts():
-            mt5.shutdown()
+        # קודם מתחברים לטרמינל שכבר פתוח ומחובר. shutdown()+path פותח
+        # תהליך שני בלי לוגין ומחזיר -6 גם כשהחלון שאתה רואה תקין.
+        for kwargs, shutdown_first in self._init_attempts():
+            if shutdown_first:
+                mt5.shutdown()
             ok = mt5.initialize(**kwargs)
             if not ok:
                 errors.append((kwargs.get("path"), mt5.last_error()))
@@ -76,11 +79,18 @@ class Mt5NativeBroker(Broker):
                     "כדי לפתוח כמה פוזיציות על אותו סימול עם טייקים שונים."
                 )
             self._connected = True
+            if self.login and int(info.login) != int(self.login):
+                _LOG.warning(
+                    "MT5_LOGIN ב-.env הוא %s אבל הטרמינל מחובר ל-%s. "
+                    "משתמשים בחשבון הפתוח.",
+                    self.login,
+                    info.login,
+                )
             _LOG.info(
                 "Connected to MT5 account %s server %s path=%s",
                 info.login,
                 info.server,
-                kwargs.get("path") or "(default)",
+                kwargs.get("path") or "(attached)",
             )
             return
         raise RuntimeError(
@@ -94,14 +104,16 @@ class Mt5NativeBroker(Broker):
             f"  Last errors: {errors[-3:]}"
         )
 
-    def _init_attempts(self) -> list[dict]:
-        attempts: list[dict] = []
+    def _init_attempts(self) -> list[tuple[dict, bool]]:
+        """(kwargs, shutdown_first). הניסיון הראשון נצמד לטרמינל החי."""
+        attempts: list[tuple[dict, bool]] = []
+        attempts.append(({"timeout": 60_000}, False))
         paths: list[Optional[str]] = []
         if self.path:
             paths.append(self.path)
         paths.extend(_discover_terminals())
         paths.append(None)
-        seen = set()
+        seen = {""}
         for path in paths:
             key = path or ""
             if key in seen:
@@ -110,8 +122,6 @@ class Mt5NativeBroker(Broker):
             base: dict = {"timeout": 60_000}
             if path:
                 base["path"] = path
-            # Credentials passed to initialize() let the terminal authorize during
-            # startup, which also works when it was never logged in manually.
             if self.login and self.password and self.server:
                 with_login = dict(base)
                 with_login.update(
@@ -119,8 +129,8 @@ class Mt5NativeBroker(Broker):
                     password=self.password,
                     server=self.server,
                 )
-                attempts.append(with_login)
-            attempts.append(dict(base))
+                attempts.append((with_login, True))
+            attempts.append((dict(base), True))
         return attempts
 
     def shutdown(self) -> None:
