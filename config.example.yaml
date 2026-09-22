@@ -27,6 +27,9 @@ telegram:
   admin_chat_id: 0
 
 trading:
+  # מתג ראשי. false = ממשיך להאזין ולתעד באקסל, אבל לא פותח פוזיציות.
+  # אפשר לשנות תוך כדי ריצה — הבוט קולט את זה תוך כ-5 שניות.
+  enabled: true
   symbol_override: ""
   max_concurrent_signals: 1
   # מדלגים על שתי שורות ה-TP הראשונות ולא נכנסים בהן בכלל.

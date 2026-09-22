@@ -508,6 +508,74 @@ def test_monthly_goes_to_email_not_telegram(tmp_path: Path):
     assert alerts == []
 
 
+def test_trading_switch_records_but_does_not_execute(tmp_path: Path):
+    engine, db, broker = _engine(tmp_path)
+    group = engine.cfg.groups[0]
+    engine.cfg.trading_enabled = False
+
+    engine._handle(_incoming(SELL, group, 401))
+
+    assert broker.positions(engine.cfg.magic_number) == []
+    window = (datetime(2020, 1, 1, tzinfo=timezone.utc), datetime(2030, 1, 1, tzinfo=timezone.utc))
+    signals = db.signals_in_range(group.name, *window)
+    assert [s.skipped_reason for s in signals] == ["trading_disabled"]
+
+    engine.cfg.trading_enabled = True
+    engine._handle(_incoming(SELL, group, 402))
+    assert len(broker.positions(engine.cfg.magic_number)) == 4
+
+
+def test_lot_and_strategy_reload_without_restart(tmp_path: Path):
+    import yaml
+
+    engine, _db, _broker = _engine(tmp_path)
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        yaml.safe_dump(
+            {
+                "telegram": {
+                    "groups": [
+                        {"name": "group_a", "chat_id": -1001, "lot": 0.05,
+                         "skip_first_tps": 1, "breakeven_after_tp": 2},
+                        {"name": "group_b", "chat_id": -1002, "lot": 0.01},
+                    ]
+                },
+                "trading": {"enabled": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+    engine.cfg.config_path = cfg_file
+    engine._cfg_mtime = 0.0  # מדמה שהקובץ השתנה מאז ההפעלה
+
+    alerts: list[str] = []
+    engine.alert = lambda text, path=None: alerts.append(text)
+    engine._maybe_reload_settings()
+
+    group_a = engine.cfg.groups[0]
+    assert group_a.lot == 0.05
+    assert group_a.skip_first_tps == 1
+    assert group_a.breakeven_after_tp == 2
+    assert engine.cfg.trading_enabled is False
+    assert alerts and "לוט" in alerts[0]
+
+
+def test_broken_config_does_not_stop_the_bot(tmp_path: Path):
+    engine, _db, _broker = _engine(tmp_path)
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("telegram:\n  groups:\n   - bad: [unclosed\n", encoding="utf-8")
+    engine.cfg.config_path = cfg_file
+    engine._cfg_mtime = 0.0
+    before = engine.cfg.groups[0].lot
+
+    alerts: list[str] = []
+    engine.alert = lambda text, path=None: alerts.append(text)
+    engine._maybe_reload_settings()
+
+    assert engine.cfg.groups[0].lot == before
+    assert alerts and "שגיאה" in alerts[0]
+
+
 def test_monthly_email_off_when_not_configured(tmp_path: Path):
     engine, _db, _broker = _engine(tmp_path)
     # ללא SMTP_HOST הפונקציה פשוט לא עושה כלום, בלי לזרוק.

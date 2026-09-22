@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .brokers.base import Broker
-from .config import AppConfig
+from .config import AppConfig, load_config
 from .db import Database
 from .emailer import EmailSender
 from .excel_report import ExcelReporter, month_bounds
@@ -63,6 +63,7 @@ class TradingEngine:
         self._safety_due: dict[str, float] = {}
         self._be_done: set[str] = set()
         self._guarded: set[int] = set()
+        self._cfg_mtime: Optional[float] = None
         self.mailer = EmailSender(cfg.email)
 
     def start(self) -> None:
@@ -240,6 +241,10 @@ class TradingEngine:
                     self._guard_positions()
                 except Exception:
                     _LOG.exception("guard failed")
+                try:
+                    self._maybe_reload_settings()
+                except Exception:
+                    _LOG.exception("config reload failed")
             if now - last_sched >= 20:
                 last_sched = now
                 try:
@@ -255,6 +260,13 @@ class TradingEngine:
         signal_id = _signal_id(item)
         symbol = self.cfg.symbol_override or item.parsed.symbol
         received = item.received_at
+
+        if not self.cfg.trading_enabled:
+            rec = _new_signal(signal_id, item, symbol, SignalStatus.SKIPPED.value, "trading_disabled")
+            self.db.insert_signal(rec)
+            self._queue_report(item.group.name, received)
+            _LOG.warning("Trading disabled — signal %s recorded but not executed", signal_id)
+            return
 
         active = self.db.active_signals()
         if len(active) >= self.cfg.max_concurrent_signals:
@@ -550,6 +562,59 @@ class TradingEngine:
                 self.alert(f"מנגנון בטיחות הופעל על טיקט {trade.ticket}", None)
             else:
                 _LOG.error("Safety modify failed ticket=%s", trade.ticket)
+
+    def _maybe_reload_settings(self) -> None:
+        """טעינה חמה של הידיות הידניות מ-config.yaml, בלי להפעיל מחדש.
+
+        נטענים מחדש רק גודל הלוט, פרמטרי האסטרטגיה לכל קבוצה, והמתג הראשי.
+        שאר ההגדרות דורשות הפעלה מחדש בכוונה, כדי לא לשבור ריצה פעילה.
+        """
+        path = self.cfg.config_path
+        if path is None:
+            return
+        try:
+            mtime = Path(path).stat().st_mtime
+        except OSError:
+            return
+        if self._cfg_mtime is None:
+            self._cfg_mtime = mtime
+            return
+        if mtime == self._cfg_mtime:
+            return
+        self._cfg_mtime = mtime
+
+        try:
+            fresh = load_config(Path(path))
+        except Exception:
+            _LOG.exception("config.yaml שונה אבל לא ניתן לטעינה — ממשיך עם הקודם")
+            self.alert("config.yaml שונה אבל יש בו שגיאה. הבוט ממשיך עם ההגדרות הישנות.", None)
+            return
+
+        changes: list[str] = []
+        by_name = {g.name: g for g in fresh.groups}
+        for group in self.cfg.groups:
+            new = by_name.get(group.name)
+            if new is None:
+                continue
+            for attr, label in (
+                ("lot", "לוט"),
+                ("skip_first_tps", "דילוג TP"),
+                ("breakeven_after_tp", "קידום אחרי TP"),
+            ):
+                old_value = getattr(group, attr)
+                new_value = getattr(new, attr)
+                if old_value != new_value:
+                    setattr(group, attr, new_value)
+                    changes.append(f"{group.name}: {label} {old_value} -> {new_value}")
+
+        if fresh.trading_enabled != self.cfg.trading_enabled:
+            self.cfg.trading_enabled = fresh.trading_enabled
+            state = "פעיל" if fresh.trading_enabled else "מושבת (מאזין ומתעד בלבד)"
+            changes.append(f"מסחר: {state}")
+
+        if changes:
+            _LOG.info("Config reloaded: %s", "; ".join(changes))
+            self.alert("עודכנו הגדרות:\n" + "\n".join(changes), None)
 
     def _guard_positions(self) -> None:
         """שומר בלתי תלוי באסטרטגיה: אף פוזיציה חיה לא נשארת בלי SL ו-TP.

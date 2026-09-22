@@ -58,6 +58,10 @@ class AppConfig:
     monthly_telegram: bool = False
     # הסיכום היומי בטלגרם הוא טקסט בלבד, בלי לצרף קבצי אקסל.
     daily_digest_files: bool = False
+    # מתג ראשי. false = ממשיך להאזין ולתעד, אבל לא פותח פוזיציות.
+    trading_enabled: bool = True
+    # נשמר כדי שנוכל לטעון מחדש לוט/אסטרטגיה בלי להפעיל מחדש את הבוט.
+    config_path: Optional[Path] = None
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -176,6 +180,8 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
         daily_digest_enabled=bool(excel.get("daily_digest", True)),
         monthly_telegram=bool(excel.get("monthly_telegram", False)),
         daily_digest_files=bool(excel.get("daily_digest_files", False)),
+        trading_enabled=bool(trading.get("enabled", True)),
+        config_path=cfg_path,
         daily_digest_hour=int(excel.get("daily_digest_hour") or 23),
         daily_digest_minute=int(excel.get("daily_digest_minute") or 55),
         data_dir=data_dir,
