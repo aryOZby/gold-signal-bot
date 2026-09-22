@@ -119,6 +119,7 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
                 magic=magic,
                 skip_first_tps=None if skip is None else max(0, int(skip)),
                 breakeven_after_tp=None if be_after is None else max(1, int(be_after)),
+                enabled=bool(item.get("enabled", True)),
             )
         )
     if len(groups) < 1:

@@ -261,11 +261,12 @@ class TradingEngine:
         symbol = self.cfg.symbol_override or item.parsed.symbol
         received = item.received_at
 
-        if not self.cfg.trading_enabled:
-            rec = _new_signal(signal_id, item, symbol, SignalStatus.SKIPPED.value, "trading_disabled")
+        if not self.cfg.trading_enabled or not item.group.enabled:
+            reason = "trading_disabled" if not self.cfg.trading_enabled else "group_disabled"
+            rec = _new_signal(signal_id, item, symbol, SignalStatus.SKIPPED.value, reason)
             self.db.insert_signal(rec)
             self._queue_report(item.group.name, received)
-            _LOG.warning("Trading disabled — signal %s recorded but not executed", signal_id)
+            _LOG.warning("Signal %s recorded but not executed (%s)", signal_id, reason)
             return
 
         active = self.db.active_signals()
@@ -600,6 +601,7 @@ class TradingEngine:
                 ("lot", "לוט"),
                 ("skip_first_tps", "דילוג TP"),
                 ("breakeven_after_tp", "קידום אחרי TP"),
+                ("enabled", "פעילה"),
             ):
                 old_value = getattr(group, attr)
                 new_value = getattr(new, attr)

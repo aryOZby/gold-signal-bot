@@ -58,6 +58,8 @@ class GroupConfig:
     # אסטרטגיה פר-קבוצה. None = לקחת את ברירת המחדל הגלובלית מ-trading.
     skip_first_tps: Optional[int] = None
     breakeven_after_tp: Optional[int] = None
+    # false = ממשיכים להאזין ולתעד, אבל לא נכנסים לעסקאות מהקבוצה הזו.
+    enabled: bool = True
 
 
 @dataclass

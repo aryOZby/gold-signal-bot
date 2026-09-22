@@ -123,7 +123,9 @@ def describe_groups(groups: list[GroupConfig]) -> str:
     parts = []
     for g in groups:
         if g.username:
-            parts.append(f"{g.name}=@{g.username}" + (f"({g.chat_id})" if g.chat_id else ""))
+            target = f"@{g.username}" + (f"({g.chat_id})" if g.chat_id else "")
         else:
-            parts.append(f"{g.name}={g.chat_id}")
+            target = str(g.chat_id)
+        suffix = "" if g.enabled else " [מושבתת]"
+        parts.append(f"{g.name}={target}{suffix}")
     return ", ".join(parts)

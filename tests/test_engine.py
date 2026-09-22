@@ -525,6 +525,36 @@ def test_trading_switch_records_but_does_not_execute(tmp_path: Path):
     assert len(broker.positions(engine.cfg.magic_number)) == 4
 
 
+def test_disabled_group_is_recorded_but_not_traded(tmp_path: Path):
+    engine, db, broker = _engine(tmp_path)
+    engine.cfg.groups = _production_groups()
+    vip, pips, kings = engine.cfg.groups
+    vip.enabled = False
+    kings.enabled = False
+
+    engine._handle(_incoming(SELL, vip, 501))
+    assert broker.positions(engine.cfg.magic_number) == []
+
+    window = (datetime(2020, 1, 1, tzinfo=timezone.utc), datetime(2030, 1, 1, tzinfo=timezone.utc))
+    assert [s.skipped_reason for s in db.signals_in_range(vip.name, *window)] == ["group_disabled"]
+
+    # הקבוצה הפעילה היחידה ממשיכה לעבוד כרגיל.
+    engine._handle(_incoming(SELL, pips, 502))
+    trades = db.trades_for_signal(db.active_signals()[0].id)
+    assert [t.tp_index for t in trades] == [3, 4, 5, 6]
+    assert all(t.group_name == "TechnicalPips6273" for t in trades)
+
+
+def test_describe_groups_marks_disabled():
+    from src.telegram_listener import describe_groups
+
+    groups = _production_groups()
+    groups[0].enabled = False
+    text = describe_groups(groups)
+    assert "group_a=-1002001216034 [מושבתת]" in text
+    assert "TechnicalPips6273=@TechnicalPips6273(-1001569906975)," in text + ","
+
+
 def test_lot_and_strategy_reload_without_restart(tmp_path: Path):
     import yaml
 
