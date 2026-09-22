@@ -70,6 +70,9 @@ class OrderResult:
     message: str = ""
     sl: Optional[float] = None
     tp: Optional[float] = None
+    # הנפח שבוצע בפועל. ה-EA יכול לדרוס את גודל הלוט מהגרף, ואז הדוחות
+    # צריכים לשקף את מה שנפתח ולא את מה שביקשנו.
+    filled_volume: Optional[float] = None
 
 
 @dataclass

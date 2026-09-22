@@ -66,7 +66,7 @@ class FileBridgeBroker(Broker):
         if res is None:
             return OrderResult(False, None, None, None, message="bridge timeout")
         parts = res.strip().split("|")
-        # RES|uid|OK|ticket|price|retcode
+        # RES|uid|OK|ticket|price|retcode|volume
         if len(parts) < 4 or parts[2] != "OK":
             return OrderResult(
                 False,
@@ -78,6 +78,12 @@ class FileBridgeBroker(Broker):
         ticket = int(float(parts[3]))
         price = float(parts[4]) if len(parts) > 4 else 0.0
         retcode = int(float(parts[5])) if len(parts) > 5 else 0
+        filled = None
+        if len(parts) > 6:
+            try:
+                filled = float(parts[6])
+            except ValueError:
+                filled = None
         return OrderResult(
             ok=True,
             ticket=ticket,
@@ -87,6 +93,7 @@ class FileBridgeBroker(Broker):
             message="bridge",
             sl=sl,
             tp=tp,
+            filled_volume=filled,
         )
 
     def modify_sl_tp(self, ticket: int, sl: Optional[float], tp: Optional[float]) -> bool:

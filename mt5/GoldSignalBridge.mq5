@@ -5,9 +5,13 @@
 #include <Trade/Trade.mqh>
 
 // רשימת ה-magic של כל הקבוצות, מופרדים בפסיק. חייב להתאים ל-config.yaml.
-input string InpMagicList = "260908,260909";
-input int    InpTimerMs   = 50;
-input int    InpDeviation = 30;
+input string InpMagicList   = "260908,260909";
+// גודל לוט קבוע לכל עסקה. 0 = להשתמש בלוט שנשלח מהבוט (config.yaml).
+input double InpLotOverride = 0.0;
+// true = לא נשלחות פקודות בפועל. מתג כיבוי מהיר מהגרף.
+input bool   InpDryRun      = false;
+input int    InpTimerMs     = 50;
+input int    InpDeviation   = 30;
 
 CTrade trade;
 string lastPosKeys = "";
@@ -46,6 +50,36 @@ bool IsOurMagic(const long magic)
    return false;
 }
 
+// מיישר לוט ידני למדרגות שהברוקר מאפשר, כדי ש-0.007 לא ייפסל.
+double NormalizeVolume(const string symbol, double volume)
+{
+   double vmin  = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+   double vmax  = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+   double vstep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+   if(vstep > 0.0)
+      volume = MathRound(volume / vstep) * vstep;
+   if(vmin > 0.0 && volume < vmin)
+      volume = vmin;
+   if(vmax > 0.0 && volume > vmax)
+      volume = vmax;
+   return NormalizeDouble(volume, 2);
+}
+
+void ShowStatus()
+{
+   string lot = (InpLotOverride > 0.0)
+                ? DoubleToString(InpLotOverride, 2) + " (override)"
+                : "from bot";
+   Comment(
+      "GoldSignalBridge\n",
+      "symbol : ", _Symbol, "\n",
+      "magics : ", InpMagicList, "\n",
+      "lot    : ", lot, "\n",
+      "mode   : ", (InpDryRun ? "DRY RUN - no orders sent" : "LIVE"), "\n",
+      "open   : ", IntegerToString(PositionsTotal())
+   );
+}
+
 int OnInit()
 {
    ParseMagics();
@@ -53,13 +87,20 @@ int OnInit()
    trade.SetDeviationInPoints(InpDeviation);
    if(!EventSetMillisecondTimer(InpTimerMs))
       EventSetTimer(1);
-   Print("GoldSignalBridge started, magics=", InpMagicList, " symbol=", _Symbol);
+   PrintFormat("GoldSignalBridge started: symbol=%s magics=%s lot=%s mode=%s",
+               _Symbol, InpMagicList,
+               (InpLotOverride > 0.0 ? DoubleToString(InpLotOverride, 2) : "from bot"),
+               (InpDryRun ? "DRY RUN" : "LIVE"));
+   if(InpDryRun)
+      Print("WARNING: InpDryRun=true - commands are logged but no orders are sent.");
+   ShowStatus();
    return INIT_SUCCEEDED;
 }
 
 void OnDeinit(const int reason)
 {
    EventKillTimer();
+   Comment("");
 }
 
 void OnTimer()
@@ -68,6 +109,7 @@ void OnTimer()
    WriteTick();
    ProcessCommands();
    DetectClosesAndWritePositions();
+   ShowStatus();
 }
 
 void WriteHeartbeat()
@@ -150,6 +192,18 @@ void DoMarket(const string uid, string &parts[])
       return;
    }
 
+   if(InpLotOverride > 0.0)
+      volume = InpLotOverride;
+   volume = NormalizeVolume(symbol, volume);
+
+   if(InpDryRun)
+   {
+      PrintFormat("DRY RUN: skipped %s %s %.2f lots sl=%.2f tp=%.2f",
+                  side, symbol, volume, sl, tp);
+      WriteRes(uid, "ERR|DRY_RUN");
+      return;
+   }
+
    trade.SetExpertMagicNumber((int)magic);
    trade.SetDeviationInPoints(deviation);
    trade.SetTypeFillingBySymbol(symbol);
@@ -165,9 +219,11 @@ void DoMarket(const string uid, string &parts[])
       ulong ticket = trade.ResultOrder();
       if(ticket == 0)
          ticket = trade.ResultDeal();
+      // הנפח נשלח בחזרה כדי שהדוחות ישקפו דריסת לוט מהגרף.
       string body = "OK|" + IntegerToString((long)ticket) + "|" +
                     DoubleToString(trade.ResultPrice(), 5) + "|" +
-                    IntegerToString((int)trade.ResultRetcode());
+                    IntegerToString((int)trade.ResultRetcode()) + "|" +
+                    DoubleToString(volume, 4);
       WriteRes(uid, body);
    }
    else

@@ -314,7 +314,8 @@ class TradingEngine:
                     group_name=item.group.name,
                     tp_index=index,
                     tp_price=tp_price,
-                    lot=item.group.lot,
+                    # ה-EA יכול לדרוס את הלוט מהגרף, ולכן מתעדים את מה שבוצע.
+                    lot=result.filled_volume or item.group.lot,
                     side=item.parsed.side.value,
                     symbol=symbol,
                     received_at=received,
