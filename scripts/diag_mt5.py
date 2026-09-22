@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -55,8 +56,11 @@ def discover_terminals() -> list[str]:
     return found
 
 
-def report_gold_symbols() -> None:
-    """אחרי חיבור מוצלח: אילו סימולי זהב קיימים אצל הברוקר ומה הבוט יבחר."""
+def report_gold_symbols() -> Optional[str]:
+    """אחרי חיבור מוצלח: אילו סימולי זהב קיימים ומה הבוט יבחר.
+
+    מחזיר הודעת בעיה, או None אם הסימול תקין.
+    """
     override = ""
     try:
         sys.path.insert(0, str(ROOT))
@@ -73,20 +77,22 @@ def report_gold_symbols() -> None:
 
     target = override or "XAUUSD"
     if gold and target not in gold:
-        print(f"  !! '{target}' לא קיים אצל הברוקר. החלף ב-config.yaml לאחד מהרשימה למעלה.")
-        return
+        suggestion = next((s for s in gold if s.upper().startswith("XAUUSD")), gold[0])
+        print(f"  !! '{target}' לא קיים אצל הברוקר.")
+        return f"symbol_override='{target}' לא קיים. שנה ב-config.yaml ל-'{suggestion}'."
 
     if not mt5.symbol_select(target, True):
-        print(f"  !! symbol_select נכשל עבור {target}: {mt5.last_error()}")
-        return
+        return f"symbol_select נכשל עבור {target}: {mt5.last_error()}"
     info = mt5.symbol_info(target)
     tick = mt5.symbol_info_tick(target)
     if info is None or tick is None:
-        print(f"  !! אין נתוני מחיר עבור {target}")
-        return
+        return f"אין נתוני מחיר עבור {target}"
     print(f"  {target}: bid={tick.bid} ask={tick.ask} digits={info.digits} point={info.point}")
     print(f"     נפח: min={info.volume_min} max={info.volume_max} step={info.volume_step}")
     print(f"     trade_mode={info.trade_mode} (0=disabled, 4=full)  stops_level={info.trade_stops_level}")
+    if int(getattr(info, "trade_mode", 4)) == 0:
+        return f"המסחר בסימול {target} מושבת אצל הברוקר (trade_mode=0)."
+    return None
 
 
 def terminal_logs(tail: int = 30) -> list[str]:
@@ -179,17 +185,33 @@ def main() -> None:
             if ok:
                 break
 
+    problems: list[str] = []
     if ok:
+        term = mt5.terminal_info()
+        # החיבור יכול להצליח בזמן שהמסחר עצמו חסום, ואז כל פקודה תידחה.
+        if term is not None and not getattr(term, "trade_allowed", True):
+            problems.append(
+                "trade_allowed=False - המסחר חסום בטרמינל. ב-MT5: Tools > Options >\n"
+                "     Expert Advisors: לסמן 'Allow algorithmic trading' ולבטל את\n"
+                "     'Disable automated trading via external Python API', ואז לוודא\n"
+                "     שכפתור Algo Trading בסרגל ירוק."
+            )
         print("\nבדיקת סימול הזהב:")
-        report_gold_symbols()
+        symbol_problem = report_gold_symbols()
+        if symbol_problem:
+            problems.append(symbol_problem)
 
     print("\nלוג הטרמינל (סוף הקובץ):")
     for line in terminal_logs():
         print(line)
 
     print("\n" + "=" * 62)
-    if ok:
+    if ok and not problems:
         print("הכל תקין. אפשר להריץ:  py main.py")
+    elif ok:
+        print(f"החיבור עובד, אבל {len(problems)} דברים ימנעו ביצוע פקודות:")
+        for num, problem in enumerate(problems, start=1):
+            print(f"  {num}. {problem}")
     else:
         print("נכשל. החשוד המרכזי כש-(-6) חוזר מיד (ולא IPC timeout):")
         print("  1. ב-MT5: Tools > Options > Expert Advisors")
