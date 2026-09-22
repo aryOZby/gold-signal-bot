@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -171,12 +172,14 @@ class Mt5NativeBroker(Broker):
     ) -> OrderResult:
         if not self._ensure_connected():
             return OrderResult(False, None, None, None, message="MT5 not connected")
-        if not mt5.symbol_select(symbol, True):
+        resolved = self._prepare_symbol(symbol)
+        if resolved is None:
             return OrderResult(False, None, None, None, message=self._describe_symbol_failure(symbol))
+        symbol = resolved
         info = mt5.symbol_info(symbol)
         tick = mt5.symbol_info_tick(symbol)
         if info is None or tick is None:
-            return OrderResult(False, None, None, None, message="no symbol/tick")
+            return OrderResult(False, None, None, None, message=f"no tick for {symbol}")
 
         sl_n = _normalize_price(sl, info)
         tp_n = _normalize_price(tp, info)
@@ -298,10 +301,44 @@ class Mt5NativeBroker(Broker):
         )
 
     def last_price(self, symbol: str) -> Optional[float]:
-        tick = mt5.symbol_info_tick(symbol)
+        resolved = self._prepare_symbol(symbol)
+        if resolved is None:
+            return None
+        tick = mt5.symbol_info_tick(resolved)
         if tick is None:
             return None
         return (float(tick.bid) + float(tick.ask)) / 2.0
+
+    def _prepare_symbol(self, symbol: str) -> Optional[str]:
+        """מכניס את הסימול ל-Market Watch ומחכה לטיק. אם השם לא קיים, מחפש חלופה של זהב."""
+        for candidate in self._symbol_candidates(symbol):
+            for _ in range(4):
+                mt5.symbol_select(candidate, True)
+                info = mt5.symbol_info(candidate)
+                tick = mt5.symbol_info_tick(candidate)
+                if info is not None and tick is not None and float(tick.ask or 0) > 0:
+                    if candidate != symbol:
+                        _LOG.warning("Using broker symbol %s instead of %s", candidate, symbol)
+                    return candidate
+                time.sleep(0.15)
+        return None
+
+    def _symbol_candidates(self, symbol: str) -> list[str]:
+        names = [symbol]
+        stem = symbol.split(".")[0].upper()
+        extras = []
+        if stem == "XAUUSD":
+            extras = ["XAUUSD.s", "XAUUSD.m", "XAUUSD", "GOLD"]
+        elif stem.startswith("XAU") or stem == "GOLD":
+            extras = [stem]
+        for row in mt5.symbols_get() or []:
+            name = row.name
+            if name.upper() == stem or name.upper().startswith(stem + "."):
+                extras.append(name)
+        for name in extras:
+            if name not in names:
+                names.append(name)
+        return names
 
 
 def _normalize_price(price: float, info) -> float:

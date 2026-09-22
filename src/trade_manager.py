@@ -392,7 +392,8 @@ class TradingEngine:
 
         if not any_ok:
             self.db.update_signal_status(signal_id, SignalStatus.FAILED.value, skipped_reason="all_orders_failed")
-            self.alert(f"כל הפקודות נכשלו לאיתות {signal_id}", None)
+            last_msg = result.message if result else "no result"
+            self.alert(f"כל הפקודות נכשלו לאיתות {signal_id}: {last_msg}", None)
         else:
             self._safety_due[signal_id] = time.monotonic() + self.cfg.safety_delay_seconds
             _LOG.info(
