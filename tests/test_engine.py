@@ -606,6 +606,26 @@ def test_broken_config_does_not_stop_the_bot(tmp_path: Path):
     assert alerts and "שגיאה" in alerts[0]
 
 
+def test_symbol_alert_fires_once_per_state_change(tmp_path: Path):
+    engine, _db, broker = _engine(tmp_path)
+    engine.cfg.symbol_override = "XAUUSD.s"
+    alerts: list[str] = []
+    engine.alert = lambda text, path=None: alerts.append(text)
+
+    # אין מחיר לסימול -> התראה אחת בלבד, גם אחרי כמה סבבים.
+    engine._check_symbol()
+    engine._check_symbol()
+    assert len(alerts) == 1
+    assert "לא זמין" in alerts[0]
+
+    # כשהסימול חוזר, מתקבלת התראה אחת על ההתאוששות.
+    broker.set_price("XAUUSD.s", 4342.0)
+    engine._check_symbol()
+    engine._check_symbol()
+    assert len(alerts) == 2
+    assert "חזר להיות זמין" in alerts[1]
+
+
 def test_monthly_email_off_when_not_configured(tmp_path: Path):
     engine, _db, _broker = _engine(tmp_path)
     # ללא SMTP_HOST הפונקציה פשוט לא עושה כלום, בלי לזרוק.

@@ -127,6 +127,37 @@ class Mt5NativeBroker(Broker):
             mt5.shutdown()
             self._connected = False
 
+    def _ensure_connected(self) -> bool:
+        """הטרמינל עלול להיסגר או להחליף חשבון תוך כדי ריצה."""
+        if mt5.account_info() is not None:
+            return True
+        _LOG.warning("MT5 link is stale (%s) — reconnecting", mt5.last_error())
+        self._connected = False
+        try:
+            self.connect()
+        except Exception:
+            _LOG.exception("MT5 reconnect failed")
+            return False
+        return self._connected
+
+    def _describe_symbol_failure(self, symbol: str) -> str:
+        """מסביר למה symbol_select נכשל במקום להחזיר הודעה סתומה."""
+        error = mt5.last_error()
+        info = mt5.account_info()
+        account = f"account={info.login} server={info.server}" if info else "no account"
+        available = [
+            s.name
+            for s in (mt5.symbols_get() or [])
+            if "XAU" in s.name.upper() or "GOLD" in s.name.upper()
+        ]
+        if available and symbol not in available:
+            return (
+                f"symbol_select failed {symbol}: לא קיים בחשבון הנוכחי ({account}). "
+                f"סימולי זהב זמינים: {', '.join(available)}. "
+                f"עדכן את symbol_override ב-config.yaml."
+            )
+        return f"symbol_select failed {symbol}: {error} ({account})"
+
     def market_order(
         self,
         symbol: str,
@@ -138,8 +169,10 @@ class Mt5NativeBroker(Broker):
         deviation: int,
         magic: int,
     ) -> OrderResult:
+        if not self._ensure_connected():
+            return OrderResult(False, None, None, None, message="MT5 not connected")
         if not mt5.symbol_select(symbol, True):
-            return OrderResult(False, None, None, None, message=f"symbol_select failed {symbol}")
+            return OrderResult(False, None, None, None, message=self._describe_symbol_failure(symbol))
         info = mt5.symbol_info(symbol)
         tick = mt5.symbol_info_tick(symbol)
         if info is None or tick is None:

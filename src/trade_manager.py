@@ -64,10 +64,12 @@ class TradingEngine:
         self._be_done: set[str] = set()
         self._guarded: set[int] = set()
         self._cfg_mtime: Optional[float] = None
+        self._symbol_ok: Optional[bool] = None
         self.mailer = EmailSender(cfg.email)
 
     def start(self) -> None:
         self.broker.connect()
+        self._check_symbol()
         self._recover()
         self._thread = threading.Thread(target=self._run, name="trading", daemon=True)
         self._report_thread = threading.Thread(target=self._report_loop, name="excel", daemon=True)
@@ -245,6 +247,10 @@ class TradingEngine:
                     self._maybe_reload_settings()
                 except Exception:
                     _LOG.exception("config reload failed")
+                try:
+                    self._check_symbol()
+                except Exception:
+                    _LOG.exception("symbol check failed")
             if now - last_sched >= 20:
                 last_sched = now
                 try:
@@ -563,6 +569,29 @@ class TradingEngine:
                 self.alert(f"מנגנון בטיחות הופעל על טיקט {trade.ticket}", None)
             else:
                 _LOG.error("Safety modify failed ticket=%s", trade.ticket)
+
+    def _check_symbol(self) -> None:
+        """הסימול תלוי בחשבון שמחובר בטרמינל, והוא עלול להתחלף תוך כדי ריצה.
+
+        מתריע רק כשהמצב משתנה, כדי לא להציף.
+        """
+        symbol = self.cfg.symbol_override
+        if not symbol:
+            return
+        ok = self.broker.last_price(symbol) is not None
+        if ok == self._symbol_ok:
+            return
+        self._symbol_ok = ok
+        if ok:
+            _LOG.info("Symbol %s is available again", symbol)
+            self.alert(f"הסימול {symbol} חזר להיות זמין. המסחר יכול להימשך.", None)
+        else:
+            _LOG.error("Symbol %s is NOT available — orders will fail", symbol)
+            self.alert(
+                f"הסימול {symbol} לא זמין בחשבון שמחובר ב-MT5. כל פקודה תיכשל.\n"
+                f"בדוק לאיזה חשבון הטרמינל מחובר, או עדכן symbol_override ב-config.yaml.",
+                None,
+            )
 
     def _maybe_reload_settings(self) -> None:
         """טעינה חמה של הידיות הידניות מ-config.yaml, בלי להפעיל מחדש.
