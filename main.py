@@ -5,6 +5,8 @@ import logging
 import sys
 from pathlib import Path
 
+import yaml
+
 from src.alerts import AlertBus
 from src.brokers.factory import make_broker
 from src.config import load_config
@@ -31,7 +33,18 @@ def main() -> int:
     parser.add_argument("--config", default="config.yaml")
     args = parser.parse_args()
 
-    cfg = load_config(Path(args.config) if args.config else None)
+    try:
+        cfg = load_config(Path(args.config) if args.config else None)
+    except yaml.YAMLError as exc:
+        mark = getattr(exc, "problem_mark", None)
+        where = f" (שורה {mark.line + 1}, עמודה {mark.column + 1})" if mark else ""
+        print(f"שגיאת תחביר ב-config.yaml{where}: {getattr(exc, 'problem', exc)}")
+        print("להצגת השורה המדויקת הרץ:  py scripts\\check_config.py")
+        return 1
+    except (ValueError, KeyError) as exc:
+        print(f"config.yaml נדחה: {exc}")
+        print("לבדיקה מלאה הרץ:  py scripts\\check_config.py")
+        return 1
     setup_logging(cfg.logs_dir)
     _LOG.info(
         "Starting dry_run=%s broker=%s groups=%s",
