@@ -54,6 +54,10 @@ class AppConfig:
     email: EmailSettings = field(default_factory=EmailSettings)
     email_monthly: bool = True
     daily_digest_enabled: bool = True
+    # הדוח החודשי הולך למייל. שלח גם לטלגרם רק אם מבקשים במפורש.
+    monthly_telegram: bool = False
+    # הסיכום היומי בטלגרם הוא טקסט בלבד, בלי לצרף קבצי אקסל.
+    daily_digest_files: bool = False
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -170,6 +174,8 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
         ),
         email_monthly=bool(excel.get("email_monthly", True)),
         daily_digest_enabled=bool(excel.get("daily_digest", True)),
+        monthly_telegram=bool(excel.get("monthly_telegram", False)),
+        daily_digest_files=bool(excel.get("daily_digest_files", False)),
         daily_digest_hour=int(excel.get("daily_digest_hour") or 23),
         daily_digest_minute=int(excel.get("daily_digest_minute") or 55),
         data_dir=data_dir,

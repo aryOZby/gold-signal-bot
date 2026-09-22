@@ -659,11 +659,19 @@ class TradingEngine:
         for group in self.cfg.groups:
             path = self.write_month_file(group.name, year, month, final=True)
             paths.append(path)
+            if self.cfg.monthly_telegram:
+                self.alert(
+                    f"דוח חודשי {year:04d}-{month:02d} לקבוצה {group.name}",
+                    path,
+                )
+        emailed = self.send_monthly_email(year, month, paths)
+        if not emailed and not self.cfg.monthly_telegram:
+            # אין ערוץ יציאה פעיל — לפחות שיהיה עקבות בלוג ובטלגרם.
+            _LOG.warning("Monthly report written to disk but not delivered anywhere")
             self.alert(
-                f"דוח חודשי {year:04d}-{month:02d} לקבוצה {group.name}",
-                path,
+                f"דוח חודשי {year:04d}-{month:02d} נשמר בשרת, אבל שליחת המייל נכשלה.",
+                None,
             )
-        self.send_monthly_email(year, month, paths)
         self.db.set_meta(key, iso_now())
         _LOG.info("Monthly reports sent for %s-%s", year, month)
 
@@ -707,7 +715,7 @@ class TradingEngine:
             profit = round(sum(t.profit or 0.0 for t in closed), 2)
             lines.append(f"{group.name}: {len(trades)} עסקאות, {len(closed)} סגורות, P/L {profit}")
             path = self._write_excel(group.name, now, final=False)
-            if path:
+            if path and self.cfg.daily_digest_files:
                 self.alert(f"קובץ אקסל שוטף — {group.name}", path)
         self.alert("\n".join(lines), None)
         self.db.set_meta(key, iso_now())

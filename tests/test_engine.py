@@ -472,6 +472,42 @@ def test_daily_digest_can_be_switched_off(tmp_path: Path):
     assert sent
 
 
+def test_daily_digest_is_text_only_by_default(tmp_path: Path):
+    engine, _db, _broker = _engine(tmp_path)
+    sent: list[tuple[str, object]] = []
+    engine.alert = lambda text, path=None: sent.append((text, path))
+    when = datetime.now(engine.cfg.tz).replace(
+        hour=engine.cfg.daily_digest_hour,
+        minute=engine.cfg.daily_digest_minute,
+    )
+
+    engine._maybe_daily(when)
+    # הודעה אחת בלבד, בלי צרופות, כדי לא להציף את הטלגרם.
+    assert len(sent) == 1
+    assert sent[0][1] is None
+    assert "סיכום יומי" in sent[0][0]
+
+
+def test_monthly_goes_to_email_not_telegram(tmp_path: Path):
+    from src.emailer import EmailSettings
+
+    engine, _db, _broker = _engine(tmp_path)
+    engine.cfg.email = EmailSettings(
+        host="smtp.example.com", user="u", password="p", recipients=("me@x.com",)
+    )
+    engine.mailer.settings = engine.cfg.email
+    mailed: list[str] = []
+    engine.mailer.send = lambda subject, body, attachments=(): mailed.append(subject) or True
+    alerts: list[str] = []
+    engine.alert = lambda text, path=None: alerts.append(text)
+
+    now = datetime.now(engine.cfg.tz)
+    engine._maybe_monthly(now.replace(day=1))
+
+    assert len(mailed) == 1
+    assert alerts == []
+
+
 def test_monthly_email_off_when_not_configured(tmp_path: Path):
     engine, _db, _broker = _engine(tmp_path)
     # ללא SMTP_HOST הפונקציה פשוט לא עושה כלום, בלי לזרוק.
