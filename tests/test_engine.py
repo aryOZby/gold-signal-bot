@@ -424,6 +424,42 @@ def test_data_survives_restart(tmp_path: Path):
     assert sheet.max_row == 5
 
 
+def test_monthly_email_attaches_a_file_per_group(tmp_path: Path):
+    from src.emailer import EmailSettings
+
+    engine, db, broker = _engine(tmp_path)
+    engine.cfg.groups = _production_groups()
+    engine.cfg.email = EmailSettings(
+        host="smtp.example.com", user="bot@x.com", password="p", recipients=("me@x.com",)
+    )
+    engine.mailer.settings = engine.cfg.email
+
+    sent = {}
+
+    def _capture(subject, body, attachments=()):
+        sent["subject"] = subject
+        sent["body"] = body
+        sent["attachments"] = list(attachments)
+        return True
+
+    engine.mailer.send = _capture
+
+    engine._handle(_incoming(SELL, engine.cfg.groups[0], 301))
+    now = datetime.now(timezone.utc)
+    paths = [engine.write_month_file(g.name, now.year, now.month, final=True)
+             for g in engine.cfg.groups]
+
+    assert engine.send_monthly_email(now.year, now.month, paths) is True
+    assert len(sent["attachments"]) == 3
+    assert "group_a" in sent["body"] and "profit_kings" in sent["body"]
+
+
+def test_monthly_email_off_when_not_configured(tmp_path: Path):
+    engine, _db, _broker = _engine(tmp_path)
+    # ללא SMTP_HOST הפונקציה פשוט לא עושה כלום, בלי לזרוק.
+    assert engine.send_monthly_email(2026, 9, []) is False
+
+
 def test_recovery_adopts_orphan_position(tmp_path: Path):
     engine, db, broker = _engine(tmp_path)
     result = broker.market_order(

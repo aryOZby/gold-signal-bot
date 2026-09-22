@@ -6,11 +6,13 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Callable, Optional
 
 from .brokers.base import Broker
 from .config import AppConfig
 from .db import Database
+from .emailer import EmailSender
 from .excel_report import ExcelReporter, month_bounds
 from .models import (
     CloseReason,
@@ -61,6 +63,7 @@ class TradingEngine:
         self._safety_due: dict[str, float] = {}
         self._be_done: set[str] = set()
         self._guarded: set[int] = set()
+        self.mailer = EmailSender(cfg.email)
 
     def start(self) -> None:
         self.broker.connect()
@@ -652,14 +655,40 @@ class TradingEngine:
                 break
         if not has_data and now.day != 1:
             return
+        paths = []
         for group in self.cfg.groups:
             path = self.write_month_file(group.name, year, month, final=True)
+            paths.append(path)
             self.alert(
                 f"דוח חודשי {year:04d}-{month:02d} לקבוצה {group.name}",
                 path,
             )
+        self.send_monthly_email(year, month, paths)
         self.db.set_meta(key, iso_now())
         _LOG.info("Monthly reports sent for %s-%s", year, month)
+
+    def send_monthly_email(self, year: int, month: int, paths: list[str]) -> bool:
+        """מייל אחד לחודש עם קובץ אקסל לכל קבוצה, במקום הצפה בטלגרם."""
+        if not self.cfg.email_monthly or not self.mailer.enabled:
+            return False
+        start, end = month_bounds(year, month, self.cfg.tz)
+        lines = [f"דוח חודשי {year:04d}-{month:02d}", ""]
+        for group in self.cfg.groups:
+            signals = self.db.signals_in_range(group.name, start, end)
+            trades = self.db.trades_in_range(group.name, start, end)
+            closed = [t for t in trades if t.status == TradeStatus.CLOSED.value]
+            profit = round(sum(t.profit or 0.0 for t in closed), 2)
+            wins = len([t for t in closed if (t.profit or 0.0) > 0])
+            lines.append(
+                f"{group.name}: {len(signals)} איתותים, {len(trades)} עסקאות, "
+                f"{len(closed)} סגורות, {wins} ברווח, סה\"כ {profit}"
+            )
+        lines += ["", "הפירוט המלא והסטטיסטיקה נמצאים בקבצים המצורפים."]
+        return self.mailer.send(
+            subject=f"דוח חודשי {year:04d}-{month:02d} — gold-signal-bot",
+            body="\n".join(lines),
+            attachments=[Path(p) for p in paths],
+        )
 
     def _maybe_daily(self, now: datetime) -> None:
         if now.hour != self.cfg.daily_digest_hour or now.minute < self.cfg.daily_digest_minute:

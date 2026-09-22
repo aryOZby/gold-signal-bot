@@ -50,6 +50,9 @@ broker:
 
 excel:
   output_dir: reports
+  # ב-01 לחודש נשלח מייל אחד עם קובץ אקסל לכל קבוצה.
+  # ההגדרות עצמן (SMTP_HOST, EMAIL_TO וכו') נמצאות ב-.env
+  email_monthly: true
   daily_digest_hour: 23
   daily_digest_minute: 55
 

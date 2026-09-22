@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 import yaml
 from dotenv import load_dotenv
 
+from .emailer import EmailSettings, parse_recipients
 from .models import GroupConfig
 
 
@@ -49,6 +50,9 @@ class AppConfig:
     logs_dir: Path
     lot_size_default: float
     tz: ZoneInfo
+    # שדות חדשים נוספים כאן עם ברירת מחדל, כדי לא לשבור קריאות קיימות.
+    email: EmailSettings = field(default_factory=EmailSettings)
+    email_monthly: bool = True
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -155,6 +159,15 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
         mt5_server=os.getenv("MT5_SERVER") or "",
         mt5_terminal_path=os.getenv("MT5_TERMINAL_PATH") or "",
         output_dir=output_dir,
+        email=EmailSettings(
+            host=os.getenv("SMTP_HOST") or "",
+            port=int(os.getenv("SMTP_PORT") or 587),
+            user=os.getenv("SMTP_USER") or "",
+            password=os.getenv("SMTP_PASSWORD") or "",
+            sender=os.getenv("EMAIL_FROM") or os.getenv("SMTP_USER") or "",
+            recipients=parse_recipients(os.getenv("EMAIL_TO")),
+        ),
+        email_monthly=bool(excel.get("email_monthly", True)),
         daily_digest_hour=int(excel.get("daily_digest_hour") or 23),
         daily_digest_minute=int(excel.get("daily_digest_minute") or 55),
         data_dir=data_dir,
