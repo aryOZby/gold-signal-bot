@@ -53,6 +53,7 @@ class AppConfig:
     # שדות חדשים נוספים כאן עם ברירת מחדל, כדי לא לשבור קריאות קיימות.
     email: EmailSettings = field(default_factory=EmailSettings)
     email_monthly: bool = True
+    daily_digest_enabled: bool = True
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -168,6 +169,7 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
             recipients=parse_recipients(os.getenv("EMAIL_TO")),
         ),
         email_monthly=bool(excel.get("email_monthly", True)),
+        daily_digest_enabled=bool(excel.get("daily_digest", True)),
         daily_digest_hour=int(excel.get("daily_digest_hour") or 23),
         daily_digest_minute=int(excel.get("daily_digest_minute") or 55),
         data_dir=data_dir,

@@ -454,6 +454,24 @@ def test_monthly_email_attaches_a_file_per_group(tmp_path: Path):
     assert "group_a" in sent["body"] and "profit_kings" in sent["body"]
 
 
+def test_daily_digest_can_be_switched_off(tmp_path: Path):
+    engine, _db, _broker = _engine(tmp_path)
+    sent: list[str] = []
+    engine.alert = lambda text, path=None: sent.append(text)
+    when = datetime.now(engine.cfg.tz).replace(
+        hour=engine.cfg.daily_digest_hour,
+        minute=engine.cfg.daily_digest_minute,
+    )
+
+    engine.cfg.daily_digest_enabled = False
+    engine._maybe_daily(when)
+    assert sent == []
+
+    engine.cfg.daily_digest_enabled = True
+    engine._maybe_daily(when)
+    assert sent
+
+
 def test_monthly_email_off_when_not_configured(tmp_path: Path):
     engine, _db, _broker = _engine(tmp_path)
     # ללא SMTP_HOST הפונקציה פשוט לא עושה כלום, בלי לזרוק.

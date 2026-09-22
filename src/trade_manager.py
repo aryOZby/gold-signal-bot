@@ -691,6 +691,8 @@ class TradingEngine:
         )
 
     def _maybe_daily(self, now: datetime) -> None:
+        if not self.cfg.daily_digest_enabled:
+            return
         if now.hour != self.cfg.daily_digest_hour or now.minute < self.cfg.daily_digest_minute:
             return
         key = f"daily_sent_{now.strftime('%Y-%m-%d')}"

@@ -50,9 +50,11 @@ broker:
 
 excel:
   output_dir: reports
-  # ב-01 לחודש נשלח מייל אחד עם קובץ אקסל לכל קבוצה.
-  # ההגדרות עצמן (SMTP_HOST, EMAIL_TO וכו') נמצאות ב-.env
+  # ב-01 לחודש נשלח דוח לכל קבוצה ל-admin_chat_id בטלגרם.
+  # אופציונלי: גם במייל, אם מוגדרים SMTP_HOST ו-EMAIL_TO ב-.env
   email_monthly: true
+  # false = בלי סיכום יומי, רק הדוח החודשי. מונע הצפה בטלגרם.
+  daily_digest: false
   daily_digest_hour: 23
   daily_digest_minute: 55
 
