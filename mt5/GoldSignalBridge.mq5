@@ -4,14 +4,12 @@
 
 #include <Trade/Trade.mqh>
 
-// רשימת ה-magic של כל הקבוצות, מופרדים בפסיק. חייב להתאים ל-config.yaml.
-input string InpMagicList   = "260908,260909";
-// גודל לוט קבוע לכל עסקה. 0 = להשתמש בלוט שנשלח מהבוט (config.yaml).
-input double InpLotOverride = 0.0;
-// true = לא נשלחות פקודות בפועל. מתג כיבוי מהיר מהגרף.
-input bool   InpDryRun      = false;
-input int    InpTimerMs     = 50;
-input int    InpDeviation   = 30;
+// השמות אחרי // מופיעים בחלון Inputs ב-MT5.
+input double InpLot         = 0.01;                    // Lot (per position)
+input bool   InpDryRun      = false;                   // Dry run (no orders)
+input string InpMagicList   = "260908,260909,260910";  // Magics
+input int    InpTimerMs     = 50;                      // Timer ms
+input int    InpDeviation   = 30;                      // Deviation
 
 CTrade trade;
 string lastPosKeys = "";
@@ -67,8 +65,8 @@ double NormalizeVolume(const string symbol, double volume)
 
 void ShowStatus()
 {
-   string lot = (InpLotOverride > 0.0)
-                ? DoubleToString(InpLotOverride, 2) + " (override)"
+   string lot = (InpLot > 0.0)
+                ? DoubleToString(InpLot, 2)
                 : "from bot";
    Comment(
       "GoldSignalBridge\n",
@@ -89,10 +87,11 @@ int OnInit()
       EventSetTimer(1);
    PrintFormat("GoldSignalBridge started: symbol=%s magics=%s lot=%s mode=%s",
                _Symbol, InpMagicList,
-               (InpLotOverride > 0.0 ? DoubleToString(InpLotOverride, 2) : "from bot"),
+               (InpLot > 0.0 ? DoubleToString(InpLot, 2) : "from bot"),
                (InpDryRun ? "DRY RUN" : "LIVE"));
    if(InpDryRun)
       Print("WARNING: InpDryRun=true - commands are logged but no orders are sent.");
+   WriteLot();
    ShowStatus();
    return INIT_SUCCEEDED;
 }
@@ -107,6 +106,7 @@ void OnTimer()
 {
    WriteHeartbeat();
    WriteTick();
+   WriteLot();
    ProcessCommands();
    DetectClosesAndWritePositions();
    ShowStatus();
@@ -118,6 +118,15 @@ void WriteHeartbeat()
    if(h == INVALID_HANDLE)
       return;
    FileWriteString(h, IntegerToString((int)TimeGMT()) + "\n");
+   FileClose(h);
+}
+
+void WriteLot()
+{
+   int h = FileOpen("gs_lot.txt", FILE_WRITE|FILE_TXT|FILE_ANSI|FILE_COMMON);
+   if(h == INVALID_HANDLE)
+      return;
+   FileWriteString(h, DoubleToString(InpLot, 4) + "\n");
    FileClose(h);
 }
 
@@ -192,8 +201,8 @@ void DoMarket(const string uid, string &parts[])
       return;
    }
 
-   if(InpLotOverride > 0.0)
-      volume = InpLotOverride;
+   if(InpLot > 0.0)
+      volume = InpLot;
    volume = NormalizeVolume(symbol, volume);
 
    if(InpDryRun)

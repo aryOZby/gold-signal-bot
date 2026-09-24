@@ -344,6 +344,7 @@ class TradingEngine:
         self.db.insert_signal(rec)
 
         magic = item.group.magic or self.cfg.magic_number
+        lot = self._order_lot(item.group)
         # --- EXECUTE FIRST, persist after each fill ---
         any_ok = False
         for index, tp_price in tradable:
@@ -354,7 +355,7 @@ class TradingEngine:
                 result = self.broker.market_order(
                     symbol=symbol,
                     side=item.parsed.side,
-                    volume=item.group.lot,
+                    volume=lot,
                     sl=item.parsed.sl,
                     tp=tp_price,
                     comment=comment,
@@ -373,7 +374,7 @@ class TradingEngine:
                     tp_index=index,
                     tp_price=tp_price,
                     # ה-EA יכול לדרוס את הלוט מהגרף, ולכן מתעדים את מה שבוצע.
-                    lot=result.filled_volume or item.group.lot,
+                    lot=result.filled_volume or lot,
                     side=item.parsed.side.value,
                     symbol=symbol,
                     received_at=received,
@@ -404,7 +405,7 @@ class TradingEngine:
                     group_name=item.group.name,
                     tp_index=index,
                     tp_price=tp_price,
-                    lot=item.group.lot,
+                    lot=lot,
                     side=item.parsed.side.value,
                     symbol=symbol,
                     received_at=received,
@@ -452,6 +453,14 @@ class TradingEngine:
 
     def _group_by_name(self, name: str) -> Optional[GroupConfig]:
         return next((g for g in self.cfg.groups if g.name == name), None)
+
+    def _order_lot(self, group: GroupConfig) -> float:
+        override = _read_chart_lot(self.cfg.common_files_dir)
+        if override is None:
+            return group.lot
+        if override != group.lot:
+            _LOG.info("Using chart lot %s instead of config %s", override, group.lot)
+        return override
 
     def _skip_first_tps(self, group: Optional[GroupConfig]) -> int:
         if group is not None and group.skip_first_tps is not None:
@@ -856,6 +865,30 @@ class TradingEngine:
 
 def iso_now() -> str:
     return utcnow().isoformat()
+
+
+def _read_chart_lot(common_files_dir: str) -> Optional[float]:
+    """קורא את הלוט מחלון Inputs של GoldSignalBridge (gs_lot.txt)."""
+    paths: list[Path] = []
+    if common_files_dir:
+        paths.append(Path(common_files_dir) / "gs_lot.txt")
+    paths.append(Path.home() / "AppData" / "Roaming" / "MetaQuotes" / "Terminal" / "Common" / "Files" / "gs_lot.txt")
+    seen: set[str] = set()
+    for path in paths:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not path.exists():
+            continue
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace").strip().splitlines()[0]
+            value = float(raw.split("|")[-1] if "|" in raw else raw)
+        except (OSError, ValueError, IndexError):
+            continue
+        if value > 0:
+            return value
+    return None
 
 
 def _parse_trade_comment(comment: str) -> tuple[Optional[str], Optional[int]]:

@@ -555,6 +555,20 @@ def test_describe_groups_marks_disabled():
     assert "TechnicalPips6273=@TechnicalPips6273(-1001569906975)," in text + ","
 
 
+def test_chart_lot_input_overrides_config(tmp_path: Path):
+    engine, db, broker = _engine(tmp_path)
+    files = tmp_path / "common"
+    files.mkdir()
+    (files / "gs_lot.txt").write_text("0.07\n", encoding="utf-8")
+    engine.cfg.common_files_dir = str(files)
+
+    engine._handle(_incoming(SELL, engine.cfg.groups[0], 88))
+    trades = db.trades_for_signal(db.active_signals()[0].id)
+    assert trades
+    assert all(abs((t.lot or 0) - 0.07) < 1e-9 for t in trades)
+    assert all(abs(p.volume - 0.07) < 1e-9 for p in broker.positions(engine.cfg.magic_number))
+
+
 def test_lot_and_strategy_reload_without_restart(tmp_path: Path):
     import yaml
 
