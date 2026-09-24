@@ -632,6 +632,40 @@ def test_monthly_email_off_when_not_configured(tmp_path: Path):
     assert engine.send_monthly_email(2026, 9, []) is False
 
 
+def test_start_survives_mt5_failure_and_records_signal(tmp_path: Path):
+    cfg = _cfg(tmp_path)
+    cfg.data_dir.mkdir(parents=True)
+    cfg.output_dir.mkdir(parents=True)
+    db = Database(cfg.data_dir / "bot.db")
+
+    class DeadBroker(DryRunBroker):
+        def connect(self):
+            raise RuntimeError("Authorization failed")
+
+    alerts: list[str] = []
+    engine = TradingEngine(
+        cfg,
+        db,
+        DeadBroker(),
+        ExcelReporter(cfg.output_dir, cfg.tz),
+        alert=lambda text, path=None: alerts.append(text),
+    )
+    engine.start()
+    incoming = _incoming(SELL, engine.cfg.groups[0], 77)
+    engine._handle(incoming)
+    engine.stop()
+
+    rows = db.signals_in_range(
+        incoming.group.name,
+        incoming.received_at.replace(year=2000),
+        incoming.received_at.replace(year=2100),
+    )
+    assert len(rows) == 1
+    assert rows[0].status == "failed"
+    assert rows[0].skipped_reason == "mt5_not_connected"
+    assert any("MT5 לא מחובר" in a for a in alerts)
+
+
 def test_recovery_adopts_orphan_position(tmp_path: Path):
     engine, db, broker = _engine(tmp_path)
     result = broker.market_order(

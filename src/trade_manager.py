@@ -68,13 +68,37 @@ class TradingEngine:
         self.mailer = EmailSender(cfg.email)
 
     def start(self) -> None:
-        self.broker.connect()
-        self._check_symbol()
-        self._recover()
+        # טלגרם חייב לעלות גם אם MT5 עדיין לא מאושר. כשיגיע איתות
+        # ננסה להתחבר שוב ונפתח פוזיציה רק אם החשבון חי.
+        try:
+            self.broker.connect()
+            self._check_symbol()
+            self._recover()
+        except Exception:
+            _LOG.exception("Broker not ready at startup — Telegram listener will still start")
+            self.alert(
+                "הבוט מאזין לטלגרם, אבל MT5 לא מחובר. "
+                "כשיגיע איתות ייעשה ניסיון נוסף לפתוח פוזיציה. "
+                "ב-MT5: File > Login to Trade Account עד ש-Journal כותב authorized.",
+                None,
+            )
         self._thread = threading.Thread(target=self._run, name="trading", daemon=True)
         self._report_thread = threading.Thread(target=self._report_loop, name="excel", daemon=True)
         self._thread.start()
         self._report_thread.start()
+
+    def _ensure_broker(self) -> bool:
+        """מתחבר ל-MT5 אם עדיין לא מחוברים. dry_run/file_bridge תמיד מצליחים."""
+        if getattr(self.broker, "_connected", None) is True:
+            return True
+        try:
+            self.broker.connect()
+        except Exception:
+            _LOG.exception("Broker connect failed")
+            return False
+        if getattr(self.broker, "_connected", None) is False:
+            return False
+        return True
 
     def stop(self) -> None:
         self._stop.set()
@@ -301,6 +325,18 @@ class TradingEngine:
                 signal_id,
                 len(item.parsed.tps),
                 skip_first,
+            )
+            return
+
+        if not self._ensure_broker():
+            rec = _new_signal(signal_id, item, symbol, SignalStatus.FAILED.value, "mt5_not_connected")
+            self.db.insert_signal(rec)
+            self._queue_report(item.group.name, received)
+            _LOG.error("Signal %s recorded but MT5 is not connected", signal_id)
+            self.alert(
+                f"איתות מ-{item.group.name} נקלט, אבל MT5 לא מחובר — לא נפתחה פוזיציה. "
+                "File > Login to Trade Account עד ש-Journal כותב authorized.",
+                None,
             )
             return
 
