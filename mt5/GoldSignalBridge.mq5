@@ -1,5 +1,5 @@
 #property copyright "gold-signal-bot"
-#property version   "1.00"
+#property version   "1.10"
 #property description "Bridge: Python gold-signal-bot ↔ MT5 via Common/Files"
 
 #include <Trade/Trade.mqh>
