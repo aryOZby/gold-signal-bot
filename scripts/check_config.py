@@ -76,14 +76,15 @@ def main() -> int:
     print(f"חודשי במייל     : {cfg.email_monthly} -> "
           f"{', '.join(cfg.email.recipients) or '(לא מוגדר)'}")
     print()
-    print(f"{'קבוצה':<22} {'chat_id':>16} {'לוט':>6} {'דילוג':>6} {'קידום':>6}  מצב")
-    print("-" * 74)
+    print(f"{'קבוצה':<22} {'chat_id':>16} {'לוט':>6} {'דילוג':>6} {'רחוקים':>8} {'קידום':>6}  מצב")
+    print("-" * 86)
     for group in cfg.groups:
         skip = group.skip_first_tps if group.skip_first_tps is not None else cfg.skip_first_tps
+        farthest = group.take_farthest_tps if group.take_farthest_tps is not None else cfg.take_farthest_tps
         be = group.breakeven_after_tp or cfg.breakeven_after_tp
         state = "פעילה" if group.enabled else "מושבתת"
-        print(f"{group.name:<22} {group.chat_id:>16} {group.lot:>6} {skip:>6} {be:>6}  {state}")
-    print("-" * 74)
+        print(f"{group.name:<22} {group.chat_id:>16} {group.lot:>6} {skip:>6} {farthest:>8} {be:>6}  {state}")
+    print("-" * 86)
 
     active = [g for g in cfg.groups if g.enabled]
     if not active:

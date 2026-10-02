@@ -4,18 +4,20 @@ dry_run: true
 telegram:
   session_name: gold_signal_bot
   groups:
-    # אסטרטגיה א': מדלגים על 2 שורות TP, קידום סטופים אחרי שורה 3.
+    # אסטרטגיה א': מדלגים על 2 שורות קרובות, נכנסים רק ל-3 ה-TP הרחוקים, קידום אחרי שורה 3.
     - name: group_a
       chat_id: -2001216034
       lot: 0.01
       magic: 260908
       skip_first_tps: 2
+      take_farthest_tps: 3
       breakeven_after_tp: 3
     - name: TechnicalPips6273
       username: TechnicalPips6273
       lot: 0.01
       magic: 260909
       skip_first_tps: 2
+      take_farthest_tps: 3
       breakeven_after_tp: 3
     # אסטרטגיה ב': נכנסים בכל שורות ה-TP, קידום סטופים כבר אחרי הראשונה.
     # - name: group_c
@@ -23,6 +25,7 @@ telegram:
     #   lot: 0.01
     #   magic: 260910
     #   skip_first_tps: 0
+    #   take_farthest_tps: 0
     #   breakeven_after_tp: 1
   admin_chat_id: 0
 
@@ -32,10 +35,12 @@ trading:
   enabled: true
   symbol_override: ""
   max_concurrent_signals: 1
-  # מדלגים על שתי שורות ה-TP הראשונות ולא נכנסים בהן בכלל.
+  # מדלגים על שתי שורות ה-TP הראשונות (קרובות מדי).
   # המספור נשמר לפי מספר השורה במקור, כך ש-TP3 נשאר TP3 בדוחות.
   skip_first_tps: 2
-  # קידום כל הסטופים לנקודת הכניסה אחרי נגיעה ב-TP של שורה 3.
+  # מבין השורות שנשארו — רק 3 ה-TP הכי רחוקים מהכניסה. 0 = בלי הגבלה.
+  take_farthest_tps: 3
+  # קידום כל הסטופים לנקודת הכניסה אחרי נגיעה במחיר של שורת TP3, גם בלי פוזיציה עליה.
   breakeven_after_tp: 3
   safety_delay_seconds: 5
   safety_pips: 50

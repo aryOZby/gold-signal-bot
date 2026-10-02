@@ -18,11 +18,13 @@ from .models import (
     CloseReason,
     GroupConfig,
     ParsedSignal,
+    Side,
     SignalRecord,
     SignalStatus,
     TradeRecord,
     TradeStatus,
 )
+from .parser import parse_signal
 from .stats import max_tp_hit
 from .timeutil import pips_from_prices, safety_levels, utcnow
 
@@ -308,23 +310,21 @@ class TradingEngine:
             self.alert(f"דולג איתות מ-{item.group.name}: כבר יש איתות פתוח.", None)
             return
 
-        # שורות ה-TP הראשונות מדולגות לחלוטין. המספור נשאר לפי השורה במקור,
-        # כך ש-breakeven_after_tp=3 ממשיך להתייחס לשורה השלישית בהודעה.
-        skip_first = self._skip_first_tps(item.group)
-        tradable = [
-            (index, price)
-            for index, price in enumerate(item.parsed.tps, start=1)
-            if index > skip_first
-        ]
+        # שורות TP קרובות מדולגות. מבין מה שנשאר לוקחים רק את ה-TP הרחוקים.
+        # המספור נשאר לפי השורה במקור, כך ש-breakeven_after_tp=3 מתייחס לשורה 3.
+        tradable = select_tradable_tps(
+            item.parsed,
+            skip_first=self._skip_first_tps(item.group),
+            take_farthest=self._take_farthest_tps(item.group),
+        )
         if not tradable:
             rec = _new_signal(signal_id, item, symbol, SignalStatus.SKIPPED.value, "no_tp_after_skip")
             self.db.insert_signal(rec)
             self._queue_report(item.group.name, received)
             _LOG.warning(
-                "Signal %s has %s TP lines, all within the skipped first %s",
+                "Signal %s has %s TP lines, none tradable after skip/farthest filter",
                 signal_id,
                 len(item.parsed.tps),
-                skip_first,
             )
             return
 
@@ -434,12 +434,11 @@ class TradingEngine:
         else:
             self._safety_due[signal_id] = time.monotonic() + self.cfg.safety_delay_seconds
             _LOG.info(
-                "Executed signal %s: %s positions (TP%s..TP%s), skipped first %s of %s lines",
+                "Executed signal %s: %s positions (TP%s..TP%s) of %s lines",
                 signal_id,
                 len(tradable),
                 tradable[0][0],
                 tradable[-1][0],
-                skip_first,
                 len(item.parsed.tps),
             )
 
@@ -466,6 +465,11 @@ class TradingEngine:
         if group is not None and group.skip_first_tps is not None:
             return group.skip_first_tps
         return self.cfg.skip_first_tps
+
+    def _take_farthest_tps(self, group: Optional[GroupConfig]) -> int:
+        if group is not None and group.take_farthest_tps is not None:
+            return group.take_farthest_tps
+        return self.cfg.take_farthest_tps
 
     def _breakeven_after_tp(self, group_name: str) -> int:
         group = self._group_by_name(group_name)
@@ -514,32 +518,37 @@ class TradingEngine:
             if signal_id in self._be_done:
                 continue
             trigger = self._breakeven_after_tp(group[0].group_name)
-            tp3 = next((t for t in group if t.tp_index == trigger), None)
-            if tp3 is None:
-                # still check the closed trigger leg via DB
-                all_trades = self.db.trades_for_signal(signal_id)
-                closed_tp3 = next(
-                    (
-                        t
-                        for t in all_trades
-                        if t.tp_index == trigger
-                        and t.close_reason == CloseReason.TP.value
-                    ),
-                    None,
-                )
-                if closed_tp3:
-                    self._move_stops_to_entry(signal_id)
+            all_trades = self.db.trades_for_signal(signal_id)
+            trigger_trade = next((t for t in all_trades if t.tp_index == trigger), None)
+            if trigger_trade and trigger_trade.close_reason == CloseReason.TP.value:
+                self._move_stops_to_entry(signal_id)
                 continue
-            price = self.broker.last_price(tp3.symbol)
+            target = (
+                trigger_trade.tp_price
+                if trigger_trade is not None
+                else self._tp_price_from_signal(signal_id, trigger)
+            )
+            if target is None:
+                continue
+            price = self.broker.last_price(group[0].symbol)
             if price is None:
                 continue
             touched = (
-                price >= tp3.tp_price
-                if tp3.side == "BUY"
-                else price <= tp3.tp_price
+                price >= target
+                if group[0].side == "BUY"
+                else price <= target
             )
             if touched:
                 self._move_stops_to_entry(signal_id)
+
+    def _tp_price_from_signal(self, signal_id: str, trigger: int) -> Optional[float]:
+        rec = self.db.get_signal(signal_id)
+        if rec is None or not rec.raw_text:
+            return None
+        parsed = parse_signal(rec.raw_text)
+        if parsed is None or len(parsed.tps) < trigger:
+            return None
+        return parsed.tps[trigger - 1]
 
     def _move_stops_to_entry(self, signal_id: str) -> None:
         if signal_id in self._be_done:
@@ -675,6 +684,7 @@ class TradingEngine:
             for attr, label in (
                 ("lot", "לוט"),
                 ("skip_first_tps", "דילוג TP"),
+                ("take_farthest_tps", "TP רחוקים"),
                 ("breakeven_after_tp", "קידום אחרי TP"),
                 ("enabled", "פעילה"),
             ):
@@ -865,6 +875,29 @@ class TradingEngine:
 
 def iso_now() -> str:
     return utcnow().isoformat()
+
+
+def select_tradable_tps(
+    parsed: ParsedSignal,
+    skip_first: int,
+    take_farthest: int,
+) -> list[tuple[int, float]]:
+    """מדלג על שורות קרובות ואז בוחר את ה-TP הרחוקים ביותר מהאזור."""
+    indexed = [
+        (index, price)
+        for index, price in enumerate(parsed.tps, start=1)
+        if index > skip_first
+    ]
+    if take_farthest <= 0 or len(indexed) <= take_farthest:
+        return indexed
+    mid = (parsed.zone_low + parsed.zone_high) / 2.0
+    def _distance(item: tuple[int, float]) -> float:
+        _index, price = item
+        return (price - mid) if parsed.side is Side.BUY else (mid - price)
+    ranked = sorted(indexed, key=lambda item: (_distance(item), item[0]), reverse=True)
+    chosen = ranked[:take_farthest]
+    chosen.sort(key=lambda item: item[0])
+    return chosen
 
 
 def _read_chart_lot(common_files_dir: str) -> Optional[float]:

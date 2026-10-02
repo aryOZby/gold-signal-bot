@@ -54,6 +54,7 @@ def _cfg(tmp: Path) -> AppConfig:
         symbol_override="",
         max_concurrent_signals=1,
         skip_first_tps=2,
+        take_farthest_tps=3,
         breakeven_after_tp=3,
         safety_delay_seconds=5,
         safety_pips=50,
@@ -110,14 +111,31 @@ def test_execute_then_persist(tmp_path: Path):
     signals = db.active_signals()
     assert len(signals) == 1
     trades = db.trades_for_signal(signals[0].id)
-    # שתי שורות ה-TP הראשונות מדולגות, המספור נשאר לפי השורה במקור.
-    assert len(trades) == 4
+    # שתי שורות קרובות מדולגות, ואז רק 3 ה-TP הרחוקים. המספור לפי השורה במקור.
+    assert len(trades) == 3
     assert all(t.status == "open" and t.ticket for t in trades)
-    assert [t.tp_index for t in trades] == [3, 4, 5, 6]
-    assert [t.tp_price for t in trades] == [4305.0, 4300.0, 4295.0, 4285.0]
+    assert [t.tp_index for t in trades] == [4, 5, 6]
+    assert [t.tp_price for t in trades] == [4300.0, 4295.0, 4285.0]
     assert broker.positions(engine.cfg.magic_number)
     path = engine._write_excel(group.name, datetime.now(timezone.utc), final=False)
     assert path and Path(path).exists()
+
+
+def test_selects_three_farthest_tps(tmp_path: Path):
+    from src.parser import parse_signal
+    from src.trade_manager import select_tradable_tps
+
+    parsed = parse_signal(SELL)
+    chosen = select_tradable_tps(parsed, skip_first=2, take_farthest=3)
+    assert chosen == [(4, 4300.0), (5, 4295.0), (6, 4285.0)]
+
+    buy = parse_signal(BUY)
+    chosen_buy = select_tradable_tps(buy, skip_first=2, take_farthest=3)
+    assert [i for i, _ in chosen_buy] == [4, 5, 6]
+    assert chosen_buy[-1][1] == 4379.0
+
+    unlimited = select_tradable_tps(parsed, skip_first=0, take_farthest=0)
+    assert [i for i, _ in unlimited] == [1, 2, 3, 4, 5, 6]
 
 
 def test_one_signal_at_a_time(tmp_path: Path):
@@ -137,9 +155,9 @@ def test_tp3_moves_remaining_stops_to_entry(tmp_path: Path):
     engine._handle(_incoming(SELL, group, 3))
     sid = db.active_signals()[0].id
     trades = db.trades_for_signal(sid)
-    for trade in trades:
-        if trade.tp_index <= 3 and trade.ticket:
-            broker.simulate_close(trade.ticket, CloseReason.TP, exit_price=trade.tp_price, profit=8)
+    assert [t.tp_index for t in trades] == [4, 5, 6]
+    # שורת TP3 לא נפתחת, אבל נגיעה במחיר שלה עדיין מקדמת סטופים.
+    broker.set_price("XAUUSD", 4305.0)
     engine._monitor()
     remaining = [t for t in db.trades_for_signal(sid) if t.status == "open"]
     assert len(remaining) == 3
@@ -189,8 +207,8 @@ def test_excel_files_are_isolated_per_group(tmp_path: Path):
     names_b = {book_b.cell(row, 1).value for row in range(2, book_b.max_row + 1)}
     assert names_a == {"group_a"}
     assert names_b == {"group_b"}
-    assert book_a.max_row == 5
-    assert book_b.max_row == 5
+    assert book_a.max_row == 4
+    assert book_b.max_row == 4
 
 
 def test_skips_signal_when_all_tp_lines_are_skipped(tmp_path: Path):
@@ -317,7 +335,7 @@ def test_two_groups_keep_separate_strategies(tmp_path: Path):
     engine._handle(_incoming(PLAN_SELL, plan_group, 93))
     sid_b = db.active_signals()[0].id
 
-    assert [t.tp_index for t in db.trades_for_signal(sid_a)] == [3, 4, 5, 6]
+    assert [t.tp_index for t in db.trades_for_signal(sid_a)] == [4, 5, 6]
     assert [t.tp_index for t in db.trades_for_signal(sid_b)] == [1, 2]
 
 
@@ -325,13 +343,13 @@ def _production_groups() -> list[GroupConfig]:
     """בדיוק מה שנכנס ל-config.yaml בשרת."""
     return [
         GroupConfig("group_a", -1002001216034, 0.01, magic=260908,
-                    skip_first_tps=2, breakeven_after_tp=3),
+                    skip_first_tps=2, take_farthest_tps=3, breakeven_after_tp=3),
         GroupConfig("TechnicalPips6273", -1001569906975, 0.01,
                     username="TechnicalPips6273", magic=260909,
-                    skip_first_tps=2, breakeven_after_tp=3),
+                    skip_first_tps=2, take_farthest_tps=3, breakeven_after_tp=3),
         GroupConfig("profit_kings", -1002984909577, 0.01,
                     username="profitkingscalper_007", magic=260910,
-                    skip_first_tps=0, breakeven_after_tp=1),
+                    skip_first_tps=0, take_farthest_tps=0, breakeven_after_tp=1),
     ]
 
 
@@ -343,17 +361,16 @@ def test_production_config_end_to_end(tmp_path: Path):
     engine.cfg.groups = _production_groups()
     vip, pips, kings = engine.cfg.groups
 
-    # אסטרטגיה א' על התבנית הישנה: 6 שורות TP -> 4 פוזיציות, החל מ-TP3.
+    # אסטרטגיה א' על התבנית הישנה: 6 שורות TP -> 3 ה-TP הרחוקים (TP4..TP6).
     engine._handle(_incoming(SELL, vip, 101))
     sid_vip = db.active_signals()[0].id
     vip_trades = db.trades_for_signal(sid_vip)
-    assert [t.tp_index for t in vip_trades] == [3, 4, 5, 6]
+    assert [t.tp_index for t in vip_trades] == [4, 5, 6]
     assert all(t.sl == 4327.0 for t in vip_trades)
     assert all(t.side == "SELL" for t in vip_trades)
 
-    # נגיעה ב-TP3 מקדמת את כל הסטופים לנקודת הכניסה.
-    tp3 = next(t for t in vip_trades if t.tp_index == 3)
-    broker.simulate_close(tp3.ticket, CloseReason.TP, exit_price=tp3.tp_price, profit=4)
+    # נגיעה במחיר של שורת TP3 מקדמת את כל הסטופים, גם בלי פוזיציה על TP3.
+    broker.set_price("XAUUSD", 4305.0)
     engine._monitor()
     still_open = [t for t in db.trades_for_signal(sid_vip) if t.status == "open"]
     assert [t.tp_index for t in still_open] == [4, 5, 6]
@@ -388,7 +405,7 @@ def test_production_config_end_to_end(tmp_path: Path):
     sheet_kings = load_workbook(paths["profit_kings"])["עסקאות"]
     assert {sheet_vip.cell(r, 1).value for r in range(2, sheet_vip.max_row + 1)} == {"group_a"}
     assert {sheet_kings.cell(r, 1).value for r in range(2, sheet_kings.max_row + 1)} == {"profit_kings"}
-    assert sheet_vip.max_row == 5      # 4 עסקאות + כותרת
+    assert sheet_vip.max_row == 4      # 3 עסקאות + כותרת
     assert sheet_kings.max_row == 3    # 2 עסקאות + כותרת
 
     # קבוצה בלי פעילות מקבלת קובץ עם כותרת בלבד.
@@ -416,12 +433,12 @@ def test_data_survives_restart(tmp_path: Path):
         datetime(2020, 1, 1, tzinfo=timezone.utc),
         datetime(2030, 1, 1, tzinfo=timezone.utc),
     )[0].id)]
-    assert len(closed) == 4
+    assert len(closed) == 3
     assert all(t.status == "closed" and t.profit == 7 for t in closed)
 
     path = Path(engine._write_excel(vip.name, datetime.now(timezone.utc), final=False))
     sheet = load_workbook(path)["עסקאות"]
-    assert sheet.max_row == 5
+    assert sheet.max_row == 4
 
 
 def test_monthly_email_attaches_a_file_per_group(tmp_path: Path):
@@ -522,7 +539,7 @@ def test_trading_switch_records_but_does_not_execute(tmp_path: Path):
 
     engine.cfg.trading_enabled = True
     engine._handle(_incoming(SELL, group, 402))
-    assert len(broker.positions(engine.cfg.magic_number)) == 4
+    assert len(broker.positions(engine.cfg.magic_number)) == 3
 
 
 def test_disabled_group_is_recorded_but_not_traded(tmp_path: Path):
@@ -541,7 +558,7 @@ def test_disabled_group_is_recorded_but_not_traded(tmp_path: Path):
     # הקבוצה הפעילה היחידה ממשיכה לעבוד כרגיל.
     engine._handle(_incoming(SELL, pips, 502))
     trades = db.trades_for_signal(db.active_signals()[0].id)
-    assert [t.tp_index for t in trades] == [3, 4, 5, 6]
+    assert [t.tp_index for t in trades] == [4, 5, 6]
     assert all(t.group_name == "TechnicalPips6273" for t in trades)
 
 

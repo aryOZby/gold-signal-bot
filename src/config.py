@@ -60,6 +60,8 @@ class AppConfig:
     daily_digest_files: bool = False
     # מתג ראשי. false = ממשיך להאזין ולתעד, אבל לא פותח פוזיציות.
     trading_enabled: bool = True
+    take_farthest_tps: int = 3
+    # נשמר כדי שנוכל לטעון מחדש לוט/אסטרטגיה בלי להפעיל מחדש את הבוט.
     # נשמר כדי שנוכל לטעון מחדש לוט/אסטרטגיה בלי להפעיל מחדש את הבוט.
     config_path: Optional[Path] = None
 
@@ -109,6 +111,7 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
             raise ValueError(f"Group {name} needs chat_id or username")
         magic = int(item.get("magic") or (default_magic + len(groups)))
         skip = item.get("skip_first_tps")
+        farthest = item.get("take_farthest_tps")
         be_after = item.get("breakeven_after_tp")
         groups.append(
             GroupConfig(
@@ -118,6 +121,7 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
                 username=username,
                 magic=magic,
                 skip_first_tps=None if skip is None else max(0, int(skip)),
+                take_farthest_tps=None if farthest is None else max(0, int(farthest)),
                 breakeven_after_tp=None if be_after is None else max(1, int(be_after)),
                 enabled=bool(item.get("enabled", True)),
             )
@@ -154,6 +158,7 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
         symbol_override=str(trading.get("symbol_override") or "").strip(),
         max_concurrent_signals=int(trading.get("max_concurrent_signals") or 1),
         skip_first_tps=max(0, int(trading.get("skip_first_tps", 2) or 0)),
+        take_farthest_tps=max(0, int(trading.get("take_farthest_tps", 3) or 0)),
         breakeven_after_tp=int(trading.get("breakeven_after_tp") or 3),
         safety_delay_seconds=float(trading.get("safety_delay_seconds") or 5),
         safety_pips=float(trading.get("safety_pips") or 50),
