@@ -149,6 +149,26 @@ def test_one_signal_at_a_time(tmp_path: Path):
     assert len(db.active_signals()) == 1
 
 
+def test_two_groups_trade_in_parallel_when_unlimited(tmp_path: Path):
+    engine, db, _broker = _engine(tmp_path)
+    engine.cfg.max_concurrent_signals = 0
+    vip, pips = engine.cfg.groups
+    engine._handle(_incoming(SELL, vip, 1))
+    engine._handle(_incoming(BUY, pips, 2))
+
+    active = db.active_signals()
+    assert {s.group_name for s in active} == {"group_a", "group_b"}
+    by_name = {s.group_name: s for s in active}
+    sell_legs = db.trades_for_signal(by_name["group_a"].id)
+    buy_legs = db.trades_for_signal(by_name["group_b"].id)
+    assert [t.tp_index for t in sell_legs] == [4, 5, 6]
+    assert [t.tp_index for t in buy_legs] == [4, 5, 6]
+    assert all(t.side == "SELL" and t.group_name == "group_a" for t in sell_legs)
+    assert all(t.side == "BUY" and t.group_name == "group_b" for t in buy_legs)
+    assert all(t.sl == 4327.0 for t in sell_legs)
+    assert all(t.sl == 4337.0 for t in buy_legs)
+
+
 def test_tp3_moves_remaining_stops_to_entry(tmp_path: Path):
     engine, db, broker = _engine(tmp_path)
     group = engine.cfg.groups[0]

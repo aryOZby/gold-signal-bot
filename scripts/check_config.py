@@ -69,6 +69,7 @@ def main() -> int:
     print("config.yaml תקין.\n")
     print(f"סימול           : {cfg.symbol_override or '(מההודעה)'}")
     print(f"מסחר פעיל       : {cfg.trading_enabled}")
+    print(f"איתותים במקביל  : {cfg.max_concurrent_signals or 'ללא הגבלה'}")
     print(f"dry_run         : {cfg.dry_run}   broker: {cfg.broker_type}")
     print(f"admin_chat_id   : {cfg.admin_chat_id or '(לא מוגדר - אין התראות טלגרם)'}")
     print(f"סיכום יומי      : {cfg.daily_digest_enabled} בשעה "

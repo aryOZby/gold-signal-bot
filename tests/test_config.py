@@ -111,3 +111,16 @@ def test_isolate_group_drops_foreign_rows():
     sigs, trs = isolate_group("group_a", signals, trades)
     assert [s.id for s in sigs] == ["a"]
     assert [t.group_name for t in trs] == ["group_a"]
+
+
+def test_zero_max_concurrent_signals_is_unlimited(tmp_path: Path):
+    from src.config import load_config
+
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "telegram:\n  groups:\n    - name: a\n      chat_id: -1\n"
+        "trading:\n  max_concurrent_signals: 0\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(path)
+    assert cfg.max_concurrent_signals == 0

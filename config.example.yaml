@@ -4,14 +4,15 @@ dry_run: true
 telegram:
   session_name: gold_signal_bot
   groups:
-    # אסטרטגיה א': מדלגים על 2 שורות קרובות, נכנסים רק ל-3 ה-TP הרחוקים, קידום אחרי שורה 3.
+    # אסטרטגיה א' — VIP Signals + Technical Pips: אותה תבנית, אותם כללים.
     - name: group_a
-      chat_id: -2001216034
+      chat_id: -1002001216034
       lot: 0.01
       magic: 260908
       skip_first_tps: 2
       take_farthest_tps: 3
       breakeven_after_tp: 3
+      enabled: true
     - name: TechnicalPips6273
       username: TechnicalPips6273
       lot: 0.01
@@ -19,14 +20,16 @@ telegram:
       skip_first_tps: 2
       take_farthest_tps: 3
       breakeven_after_tp: 3
-    # אסטרטגיה ב': נכנסים בכל שורות ה-TP, קידום סטופים כבר אחרי הראשונה.
-    # - name: group_c
-    #   username: SomeOtherGroup
+      enabled: true
+    # אסטרטגיה ב' — כבויה בינתיים.
+    # - name: profit_kings
+    #   username: profitkingscalper_007
     #   lot: 0.01
     #   magic: 260910
     #   skip_first_tps: 0
     #   take_farthest_tps: 0
     #   breakeven_after_tp: 1
+    #   enabled: false
   admin_chat_id: 0
 
 trading:
@@ -34,7 +37,9 @@ trading:
   # אפשר לשנות תוך כדי ריצה — הבוט קולט את זה תוך כ-5 שניות.
   enabled: true
   symbol_override: ""
-  max_concurrent_signals: 1
+  # 0 = בלי הגבלה. שתי קבוצות (ואיתותים נוספים) יכולות לרוץ במקביל.
+  # התיעוד נשאר נפרד לכל קבוצה.
+  max_concurrent_signals: 0
   # מדלגים על שתי שורות ה-TP הראשונות (קרובות מדי).
   # המספור נשמר לפי מספר השורה במקור, כך ש-TP3 נשאר TP3 בדוחות.
   skip_first_tps: 2

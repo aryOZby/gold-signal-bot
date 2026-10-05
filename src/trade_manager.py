@@ -302,7 +302,8 @@ class TradingEngine:
             return
 
         active = self.db.active_signals()
-        if len(active) >= self.cfg.max_concurrent_signals:
+        limit = self.cfg.max_concurrent_signals
+        if limit > 0 and len(active) >= limit:
             rec = _new_signal(signal_id, item, symbol, SignalStatus.SKIPPED.value, "busy_one_signal")
             self.db.insert_signal(rec)
             self._queue_report(item.group.name, received)
@@ -698,6 +699,10 @@ class TradingEngine:
             self.cfg.trading_enabled = fresh.trading_enabled
             state = "פעיל" if fresh.trading_enabled else "מושבת (מאזין ומתעד בלבד)"
             changes.append(f"מסחר: {state}")
+
+        if fresh.max_concurrent_signals != self.cfg.max_concurrent_signals:
+            self.cfg.max_concurrent_signals = fresh.max_concurrent_signals
+            changes.append(f"איתותים במקביל: {fresh.max_concurrent_signals or 'ללא הגבלה'}")
 
         if changes:
             _LOG.info("Config reloaded: %s", "; ".join(changes))
