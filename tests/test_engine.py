@@ -137,6 +137,12 @@ def test_selects_three_farthest_tps(tmp_path: Path):
     unlimited = select_tradable_tps(parsed, skip_first=0, take_farthest=0)
     assert [i for i, _ in unlimited] == [1, 2, 3, 4, 5, 6]
 
+    from src.trade_manager import select_breakeven_trigger
+
+    assert select_breakeven_trigger(chosen, 3) == (4, 4300.0)
+    assert select_breakeven_trigger(chosen, 4) == (4, 4300.0)
+    assert select_breakeven_trigger([(1, 4349.0), (2, 4335.0)], 1) == (1, 4349.0)
+
 
 def test_one_signal_at_a_time(tmp_path: Path):
     engine, db, _broker = _engine(tmp_path)
@@ -147,6 +153,27 @@ def test_one_signal_at_a_time(tmp_path: Path):
     assert len(skipped) == 1
     assert skipped[0].skipped_reason == "busy_one_signal"
     assert len(db.active_signals()) == 1
+
+
+def test_same_group_does_not_open_opposite_side(tmp_path: Path):
+    engine, db, broker = _engine(tmp_path)
+    engine.cfg.max_concurrent_signals = 0
+    group = engine.cfg.groups[0]
+    engine._handle(_incoming(SELL, group, 1))
+    engine._handle(_incoming(BUY, group, 2))
+    window = (
+        datetime(2020, 1, 1, tzinfo=timezone.utc),
+        datetime(2030, 1, 1, tzinfo=timezone.utc),
+    )
+    signals = db.signals_in_range(group.name, *window)
+    skipped = [s for s in signals if s.status == "skipped"]
+    assert len(skipped) == 1
+    assert skipped[0].skipped_reason == "busy_group"
+    assert skipped[0].side == "BUY"
+    open_trades = db.open_trades()
+    assert open_trades
+    assert all(t.side == "SELL" for t in open_trades)
+    assert all(p.side is Side.SELL for p in broker.positions(engine.cfg.magic_number))
 
 
 def test_two_groups_trade_in_parallel_when_unlimited(tmp_path: Path):
@@ -169,21 +196,53 @@ def test_two_groups_trade_in_parallel_when_unlimited(tmp_path: Path):
     assert all(t.sl == 4337.0 for t in buy_legs)
 
 
-def test_tp3_moves_remaining_stops_to_entry(tmp_path: Path):
+def test_skipped_tp_price_does_not_move_stops(tmp_path: Path):
     engine, db, broker = _engine(tmp_path)
     group = engine.cfg.groups[0]
     engine._handle(_incoming(SELL, group, 3))
     sid = db.active_signals()[0].id
     trades = db.trades_for_signal(sid)
     assert [t.tp_index for t in trades] == [4, 5, 6]
-    # שורת TP3 לא נפתחת, אבל נגיעה במחיר שלה עדיין מקדמת סטופים.
+    # מחיר שורת TP3 (דולגה) לא מקדם סטופים — זה מה שסגר עסקאות בכניסה.
     broker.set_price("XAUUSD", 4305.0)
     engine._monitor()
     remaining = [t for t in db.trades_for_signal(sid) if t.status == "open"]
-    assert len(remaining) == 3
     assert [t.tp_index for t in remaining] == [4, 5, 6]
+    assert all(not t.sl_moved_to_be for t in remaining)
+    assert all(t.sl == 4327.0 for t in remaining)
+
+
+def test_stops_move_only_after_opened_trigger_tp_hits(tmp_path: Path):
+    engine, db, broker = _engine(tmp_path)
+    group = engine.cfg.groups[0]
+    engine._handle(_incoming(SELL, group, 3))
+    sid = db.active_signals()[0].id
+    tp4 = next(t for t in db.trades_for_signal(sid) if t.tp_index == 4)
+    broker.simulate_close(tp4.ticket, CloseReason.TP, exit_price=tp4.tp_price, profit=5)
+    engine._monitor()
+    remaining = [t for t in db.trades_for_signal(sid) if t.status == "open"]
+    assert [t.tp_index for t in remaining] == [5, 6]
     assert all(t.sl_moved_to_be for t in remaining)
     assert all(t.sl == t.entry_price for t in remaining)
+    assert all(t.tp_price == orig for t, orig in zip(remaining, (4295.0, 4285.0)))
+
+
+def test_price_at_opened_tp_moves_farther_stops_only(tmp_path: Path):
+    engine, db, broker = _engine(tmp_path)
+    group = engine.cfg.groups[0]
+    engine._handle(_incoming(SELL, group, 3))
+    sid = db.active_signals()[0].id
+    broker.set_price("XAUUSD", 4300.0)
+    engine._monitor()
+    by_index = {t.tp_index: t for t in db.trades_for_signal(sid) if t.status == "open"}
+    assert set(by_index) == {4, 5, 6}
+    assert not by_index[4].sl_moved_to_be
+    assert by_index[4].sl == 4327.0
+    assert by_index[4].tp_price == 4300.0
+    assert by_index[5].sl_moved_to_be and by_index[5].sl == by_index[5].entry_price
+    assert by_index[6].sl_moved_to_be and by_index[6].sl == by_index[6].entry_price
+    assert by_index[5].tp_price == 4295.0
+    assert by_index[6].tp_price == 4285.0
 
 
 def test_safety_fills_missing_sl_tp(tmp_path: Path):
@@ -389,11 +448,17 @@ def test_production_config_end_to_end(tmp_path: Path):
     assert all(t.sl == 4327.0 for t in vip_trades)
     assert all(t.side == "SELL" for t in vip_trades)
 
-    # נגיעה במחיר של שורת TP3 מקדמת את כל הסטופים, גם בלי פוזיציה על TP3.
     broker.set_price("XAUUSD", 4305.0)
     engine._monitor()
     still_open = [t for t in db.trades_for_signal(sid_vip) if t.status == "open"]
     assert [t.tp_index for t in still_open] == [4, 5, 6]
+    assert all(not t.sl_moved_to_be for t in still_open)
+
+    tp4 = next(t for t in still_open if t.tp_index == 4)
+    broker.simulate_close(tp4.ticket, CloseReason.TP, exit_price=tp4.tp_price, profit=6)
+    engine._monitor()
+    still_open = [t for t in db.trades_for_signal(sid_vip) if t.status == "open"]
+    assert [t.tp_index for t in still_open] == [5, 6]
     assert all(t.sl_moved_to_be and t.sl == t.entry_price for t in still_open)
 
     for trade in still_open:

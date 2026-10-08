@@ -32,7 +32,7 @@ Signal channels post trade calls faster than anyone can copy them by hand, and e
 - **Risk-% position sizing.** Each signal risks a fixed share of the account balance, sized from the distance to the SL and split across the TP legs. Lots are rounded down to the lot step and capped by `max_lot`. If even the minimum lot would exceed the risk budget, the signal is skipped instead of over-risked.
 - **Signal sanity checks.** A signal is rejected when its SL or TPs sit on the wrong side of the entry zone, when the market is already past the SL, or when the SL is farther than `max_sl_pips` from entry.
 - **Daily loss limit.** No new signals are taken after today's realised loss reaches a money amount or a percentage of balance. Open positions are left alone.
-- **Breakeven automation.** Once price touches TP3, every remaining stop moves to entry.
+- **Breakeven automation.** Stops move to entry only after an actually opened TP is hit. Skipped closer lines (for example TP3 when only TP4–TP6 are traded) do not trigger it. The trigger leg keeps its own TP; only farther legs get the breakeven stop.
 - **Safety guard.** A background loop checks every position. Any position that has no SL or TP 5 seconds after opening gets a 50-pip emergency SL/TP.
 
 **Operations**
@@ -40,7 +40,7 @@ Signal channels post trade calls faster than anyone can copy them by hand, and e
 - **Hot reload.** Changes to the lot size, strategy, risk settings, or the master trading switch in `config.yaml` apply within about 5 seconds, without a restart.
 - **Reporting.** A live Excel workbook for each channel and month, plus a TP1–TP6 hit-rate sheet. A daily digest goes to Telegram and the monthly report goes out by email.
 - **Tooling.** One-command Windows VPS installer, a Scheduled Task with auto-restart, a systemd unit, MT5 diagnostics, and a config linter.
-- **CI.** GitHub Actions runs the 70-test suite on Python 3.11 and 3.12 for every push.
+- **CI.** GitHub Actions runs the 73-test suite on Python 3.11 and 3.12 for every push.
 
 ## See it work
 
@@ -177,7 +177,7 @@ See [`.env.example`](.env.example).
 | `telegram.groups[].lot` | `0.01` | Lot per position, per channel (fixed mode) |
 | `telegram.groups[].skip_first_tps` | `2` | Ignore the first N TP lines |
 | `telegram.groups[].take_farthest_tps` | `3` | Trade only the K farthest remaining TPs |
-| `telegram.groups[].breakeven_after_tp` | `3` | Move all stops to entry after this TP is touched |
+| `telegram.groups[].breakeven_after_tp` | `3` | After this opened TP is actually hit, move farther stops to entry |
 | `trading.enabled` | `true` | Master switch, hot-reloaded |
 | `trading.safety_pips` | `50` | Emergency SL/TP distance |
 | `broker.type` | `dry_run` | `dry_run` · `mt5_native` · `file_bridge` |

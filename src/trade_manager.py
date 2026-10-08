@@ -24,7 +24,6 @@ from .models import (
     TradeRecord,
     TradeStatus,
 )
-from .parser import parse_signal
 from .stats import max_tp_hit
 from .timeutil import pips_from_prices, safety_levels, utcnow
 
@@ -236,11 +235,10 @@ class TradingEngine:
         self.db.update_trade(trade)
         _LOG.info("Closed ticket %s reason=%s profit=%s", trade.ticket, reason, deal.profit)
         self._queue_report(trade.group_name, trade.received_at)
-        if (
-            trade.tp_index == self._breakeven_after_tp(trade.group_name)
-            and reason == CloseReason.TP.value
-        ):
-            self._move_stops_to_entry(trade.signal_id)
+        if reason == CloseReason.TP.value:
+            trigger = self._breakeven_trigger_trade(trade.signal_id)
+            if trigger is not None and trigger.tp_index == trade.tp_index:
+                self._move_stops_to_entry(trade.signal_id, after_tp_index=trade.tp_index)
         return True
 
     def _run(self) -> None:
@@ -302,6 +300,21 @@ class TradingEngine:
             return
 
         active = self.db.active_signals()
+        if any(s.group_name == item.group.name for s in active):
+            rec = _new_signal(signal_id, item, symbol, SignalStatus.SKIPPED.value, "busy_group")
+            self.db.insert_signal(rec)
+            self._queue_report(item.group.name, received)
+            _LOG.warning(
+                "Skipped signal %s — %s already has an active signal (won't mix BUY and SELL)",
+                signal_id,
+                item.group.name,
+            )
+            self.alert(
+                f"דולג איתות מ-{item.group.name}: כבר יש איתות פתוח באותה קבוצה "
+                "(לא פותחים לונג ושורט יחד).",
+                None,
+            )
+            return
         limit = self.cfg.max_concurrent_signals
         if limit > 0 and len(active) >= limit:
             rec = _new_signal(signal_id, item, symbol, SignalStatus.SKIPPED.value, "busy_one_signal")
@@ -312,7 +325,7 @@ class TradingEngine:
             return
 
         # שורות TP קרובות מדולגות. מבין מה שנשאר לוקחים רק את ה-TP הרחוקים.
-        # המספור נשאר לפי השורה במקור, כך ש-breakeven_after_tp=3 מתייחס לשורה 3.
+        # קידום לכניסה מחכה ל-TP שנפתח בפועל, לא לשורה שדולגה.
         tradable = select_tradable_tps(
             item.parsed,
             skip_first=self._skip_first_tps(item.group),
@@ -478,6 +491,25 @@ class TradingEngine:
             return group.breakeven_after_tp
         return self.cfg.breakeven_after_tp
 
+    def _breakeven_trigger_trade(self, signal_id: str) -> Optional[TradeRecord]:
+        """ה-TP שצריך באמת להיגע לפני שמקדמים סטופים לכניסה.
+
+        אם שורת breakeven_after_tp דולגה (skip / farthest), מחכים ל-TP
+        הפתוח הקרוב ביותר שאחריה — אף פעם לא למחיר של שורה שלא נפתחה.
+        """
+        trades = [t for t in self.db.trades_for_signal(signal_id) if t.ticket is not None]
+        if not trades:
+            return None
+        trigger_n = self._breakeven_after_tp(trades[0].group_name)
+        chosen = select_breakeven_trigger(
+            [(t.tp_index, t.tp_price) for t in trades],
+            trigger_n,
+        )
+        if chosen is None:
+            return None
+        index, _price = chosen
+        return next((t for t in trades if t.tp_index == index), None)
+
     def _group_for_magic(self, magic: int) -> Optional[GroupConfig]:
         for group in self.cfg.groups:
             if (group.magic or self.cfg.magic_number) == magic:
@@ -518,19 +550,15 @@ class TradingEngine:
         for signal_id, group in by_signal.items():
             if signal_id in self._be_done:
                 continue
-            trigger = self._breakeven_after_tp(group[0].group_name)
-            all_trades = self.db.trades_for_signal(signal_id)
-            trigger_trade = next((t for t in all_trades if t.tp_index == trigger), None)
-            if trigger_trade and trigger_trade.close_reason == CloseReason.TP.value:
-                self._move_stops_to_entry(signal_id)
+            trigger_trade = self._breakeven_trigger_trade(signal_id)
+            if trigger_trade is None:
                 continue
-            target = (
-                trigger_trade.tp_price
-                if trigger_trade is not None
-                else self._tp_price_from_signal(signal_id, trigger)
-            )
-            if target is None:
+            if trigger_trade.close_reason == CloseReason.TP.value:
+                self._move_stops_to_entry(signal_id, after_tp_index=trigger_trade.tp_index)
                 continue
+            if trigger_trade.status != TradeStatus.OPEN.value:
+                continue
+            target = trigger_trade.tp_price
             price = self.broker.last_price(group[0].symbol)
             if price is None:
                 continue
@@ -540,25 +568,21 @@ class TradingEngine:
                 else price <= target
             )
             if touched:
-                self._move_stops_to_entry(signal_id)
+                self._move_stops_to_entry(signal_id, after_tp_index=trigger_trade.tp_index)
 
-    def _tp_price_from_signal(self, signal_id: str, trigger: int) -> Optional[float]:
-        rec = self.db.get_signal(signal_id)
-        if rec is None or not rec.raw_text:
-            return None
-        parsed = parse_signal(rec.raw_text)
-        if parsed is None or len(parsed.tps) < trigger:
-            return None
-        return parsed.tps[trigger - 1]
-
-    def _move_stops_to_entry(self, signal_id: str) -> None:
+    def _move_stops_to_entry(self, signal_id: str, after_tp_index: int) -> None:
         if signal_id in self._be_done:
             return
-        trades = [t for t in self.db.trades_for_signal(signal_id) if t.status == TradeStatus.OPEN.value]
+        trades = [
+            t
+            for t in self.db.trades_for_signal(signal_id)
+            if t.status == TradeStatus.OPEN.value and t.tp_index > after_tp_index
+        ]
         moved = 0
         for trade in trades:
             if trade.ticket is None or trade.entry_price is None:
                 continue
+            # רק SL לכניסה. ה-TP נשאר במחירו עד שנגיעים אליו באמת.
             ok = self.broker.modify_sl_tp(trade.ticket, sl=trade.entry_price, tp=trade.tp_price)
             if ok:
                 self.db.mark_breakeven(trade.id, trade.entry_price)
@@ -566,9 +590,15 @@ class TradingEngine:
             else:
                 _LOG.warning("Failed to move SL to entry ticket=%s", trade.ticket)
         self._be_done.add(signal_id)
-        _LOG.info("Moved %s stops to entry for %s", moved, signal_id)
-        if trades:
-            self._queue_report(trades[0].group_name, trades[0].received_at)
+        _LOG.info(
+            "Moved %s stops to entry for %s after TP%s was reached (farther legs only)",
+            moved,
+            signal_id,
+            after_tp_index,
+        )
+        report_from = trades or self.db.trades_for_signal(signal_id)
+        if report_from:
+            self._queue_report(report_from[0].group_name, report_from[0].received_at)
 
     def _complete_if_done(self, snapshot: list[TradeRecord]) -> None:
         signal_ids = {t.signal_id for t in snapshot}
@@ -903,6 +933,26 @@ def select_tradable_tps(
     chosen = ranked[:take_farthest]
     chosen.sort(key=lambda item: item[0])
     return chosen
+
+
+def select_breakeven_trigger(
+    tradable: list[tuple[int, float]],
+    breakeven_after_tp: int,
+) -> Optional[tuple[int, float]]:
+    """ה-TP שצריך להיסגר/להיגע לפני קידום סטופים לכניסה.
+
+    אם השורה המבוקשת נפתחה — היא הטריגר. אם דולגה, הטריגר הוא ה-TP
+    הפתוח הקרוב ביותר שאחריה (למשל skip 2 + farthest 3 + BE 3 → TP4).
+    """
+    if not tradable or breakeven_after_tp < 1:
+        return None
+    exact = next((item for item in tradable if item[0] == breakeven_after_tp), None)
+    if exact is not None:
+        return exact
+    farther = [item for item in tradable if item[0] > breakeven_after_tp]
+    if not farther:
+        return None
+    return min(farther, key=lambda item: item[0])
 
 
 def _read_chart_lot(common_files_dir: str) -> Optional[float]:

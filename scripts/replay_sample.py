@@ -75,9 +75,9 @@ def main() -> int:
     play(engine, BUY, group_b, 2)
 
     trades = db.trades_for_signal(db.active_signals()[0].id)
-    # hit TP3 then remaining should move to entry on next monitor
+    # hit the opened trigger TP (TP4 after skip/farthest), then farther stops move to entry
     for trade in trades:
-        if trade.tp_index <= 3 and trade.ticket:
+        if trade.tp_index == 4 and trade.ticket:
             broker.simulate_close(trade.ticket, CloseReason.TP, exit_price=trade.tp_price, profit=10)
     engine._monitor()
 
@@ -85,7 +85,7 @@ def main() -> int:
     for group in {group_a.name, group_b.name}:
         path = engine._write_excel(group, now, final=False)
         print(f"Wrote {path}")
-    print("Done. First signal executed, second skipped (one-at-a-time), TP3 triggered breakeven.")
+    print("Done. First signal executed, second skipped (one-at-a-time), opened TP hit then farther stops moved to entry.")
     return 0
 
 
