@@ -322,6 +322,25 @@ class Mt5NativeBroker(Broker):
             return None
         return (float(tick.bid) + float(tick.ask)) / 2.0
 
+    def account_balance(self) -> Optional[float]:
+        info = mt5.account_info()
+        if info is None:
+            return None
+        return float(info.balance)
+
+    def value_per_price_unit(self, symbol: str) -> Optional[float]:
+        resolved = self._prepare_symbol(symbol)
+        if resolved is None:
+            return None
+        info = mt5.symbol_info(resolved)
+        if info is None:
+            return None
+        tick_value = float(getattr(info, "trade_tick_value", 0) or 0)
+        tick_size = float(getattr(info, "trade_tick_size", 0) or 0)
+        if tick_value <= 0 or tick_size <= 0:
+            return None
+        return tick_value / tick_size
+
     def _prepare_symbol(self, symbol: str) -> Optional[str]:
         """מכניס את הסימול ל-Market Watch ומחכה לטיק. אם השם לא קיים, מחפש חלופה של זהב."""
         for candidate in self._symbol_candidates(symbol):

@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 
 from .emailer import EmailSettings, parse_recipients
 from .models import GroupConfig
+from .risk import RiskSettings, parse_risk_settings
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -61,7 +62,7 @@ class AppConfig:
     # מתג ראשי. false = ממשיך להאזין ולתעד, אבל לא פותח פוזיציות.
     trading_enabled: bool = True
     take_farthest_tps: int = 3
-    # נשמר כדי שנוכל לטעון מחדש לוט/אסטרטגיה בלי להפעיל מחדש את הבוט.
+    risk: RiskSettings = field(default_factory=RiskSettings)
     # נשמר כדי שנוכל לטעון מחדש לוט/אסטרטגיה בלי להפעיל מחדש את הבוט.
     config_path: Optional[Path] = None
 
@@ -187,6 +188,7 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
         monthly_telegram=bool(excel.get("monthly_telegram", False)),
         daily_digest_files=bool(excel.get("daily_digest_files", False)),
         trading_enabled=bool(trading.get("enabled", True)),
+        risk=parse_risk_settings(raw.get("risk")),
         config_path=cfg_path,
         daily_digest_hour=int(excel.get("daily_digest_hour") or 23),
         daily_digest_minute=int(excel.get("daily_digest_minute") or 55),
@@ -198,7 +200,7 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
 
 
 def chat_id_aliases(chat_id: int) -> set[int]:
-    """web.telegram.org/k/#-2001216034 vs Telethon/Bot API -1002001216034."""
+    """web.telegram.org/k/#-1234567890 vs Telethon/Bot API -1001234567890."""
     ids = {int(chat_id)}
     raw = abs(int(chat_id))
     text = str(raw)

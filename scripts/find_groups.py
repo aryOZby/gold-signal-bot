@@ -1,10 +1,10 @@
 """מציאת chat_id מדויק לפי שם קבוצה, והזרקתו ל-config.yaml.
 
 חיפוש בלבד (מדפיס מועמדים):
-    py scripts\\find_groups.py "technical pips" "vip signals room"
+    py scripts\\find_groups.py "gold room a" "signals room b"
 
 כתיבה ל-config.yaml (הפורמט הוא <שם_בקונפיג>=<חיפוש_בטלגרם>):
-    py scripts\\find_groups.py --apply "group_a=vip signals room" "plan_group=technical pips"
+    py scripts\\find_groups.py --apply "group_a=gold room a" "plan_group=signals room b"
 
 שמות קבוצות בטלגרם כתובים לעיתים בתווי יוניקוד מעוצבים, למשל
 "𝐓𝐞𝐜𝐡𝐧𝐢𝐜𝐚𝐥 𝐏𝐢𝐩𝐬 ™". הנרמול כאן ממיר אותם לאותיות רגילות כדי שחיפוש
@@ -31,7 +31,7 @@ CONFIG_PATH = ROOT / "config.yaml"
 
 
 def normalize(text: str) -> str:
-    """'𝐓𝐞𝐜𝐡𝐧𝐢𝐜𝐚𝐥 𝐏𝐢𝐩𝐬 ™' -> 'technical pips tm'"""
+    """'𝐆𝐨𝐥𝐝 𝐑𝐨𝐨𝐦 ™' -> 'gold room tm'"""
     value = unicodedata.normalize("NFKC", text or "")
     value = "".join(c for c in value if not unicodedata.category(c).startswith("So"))
     return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()

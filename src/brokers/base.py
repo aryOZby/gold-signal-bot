@@ -44,3 +44,11 @@ class Broker(ABC):
     @abstractmethod
     def last_price(self, symbol: str) -> Optional[float]:
         raise NotImplementedError
+
+    def account_balance(self) -> Optional[float]:
+        """Account balance, or None when the backend can't report it."""
+        return None
+
+    def value_per_price_unit(self, symbol: str) -> Optional[float]:
+        """Account-currency P/L of a 1.0 price move for 1 lot, or None if unknown."""
+        return None

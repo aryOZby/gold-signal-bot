@@ -5,8 +5,8 @@ from zoneinfo import ZoneInfo
 
 
 def test_web_k_id_matches_telethon_supergroup_id():
-    web = -2001216034
-    telethon = -1002001216034
+    web = -1234567890
+    telethon = -1001234567890
     assert telethon in chat_id_aliases(web)
     assert web in chat_id_aliases(telethon)
 
@@ -16,7 +16,7 @@ def test_group_lookup_accepts_both_id_forms():
         timezone="Asia/Jerusalem",
         dry_run=True,
         session_name="t",
-        groups=[GroupConfig("group_a", -2001216034, 0.01)],
+        groups=[GroupConfig("group_a", -1234567890, 0.01)],
         admin_chat_id=0,
         telegram_api_id=0,
         telegram_api_hash="",
@@ -46,8 +46,8 @@ def test_group_lookup_accepts_both_id_forms():
         lot_size_default=0.01,
         tz=ZoneInfo("Asia/Jerusalem"),
     )
-    assert group_by_chat_id(cfg, -2001216034) is not None
-    assert group_by_chat_id(cfg, -1002001216034) is not None
+    assert group_by_chat_id(cfg, -1234567890) is not None
+    assert group_by_chat_id(cfg, -1001234567890) is not None
     assert group_by_chat_id(cfg, -1) is None
 
 
@@ -58,7 +58,7 @@ def test_group_lookup_by_username():
         timezone="Asia/Jerusalem",
         dry_run=True,
         session_name="t",
-        groups=[GroupConfig("TechnicalPips6273", 0, 0.01, username="TechnicalPips6273")],
+        groups=[GroupConfig("ChannelB", 0, 0.01, username="ChannelB")],
         admin_chat_id=0,
         telegram_api_id=0,
         telegram_api_hash="",
@@ -88,8 +88,8 @@ def test_group_lookup_by_username():
         lot_size_default=0.01,
         tz=ZoneInfo("Asia/Jerusalem"),
     )
-    assert group_by_username(cfg, "@TechnicalPips6273") is not None
-    assert group_by_username(cfg, "technicalpips6273") is not None
+    assert group_by_username(cfg, "@ChannelB") is not None
+    assert group_by_username(cfg, "channelb") is not None
     assert group_by_username(cfg, "other") is None
     assert group_by_chat_id(cfg, 0) is None
 

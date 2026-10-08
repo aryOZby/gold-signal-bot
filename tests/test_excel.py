@@ -27,8 +27,8 @@ def _signal(**kw) -> SignalRecord:
     now = utcnow()
     data = dict(
         id="sig-1",
-        group_name="TechnicalPips6273",
-        chat_id=-1001569906975,
+        group_name="ChannelB",
+        chat_id=-1009876543210,
         telegram_msg_id=11,
         received_at=now,
         symbol="XAUUSD",
@@ -38,7 +38,7 @@ def _signal(**kw) -> SignalRecord:
         sl=4327,
         raw_text=SELL_TEXT,
         status="active",
-        username="TechnicalPips6273",
+        username="ChannelB",
     )
     data.update(kw)
     return SignalRecord(**data)
@@ -50,7 +50,7 @@ def _trade(tp_index: int, **kw) -> TradeRecord:
         id=tp_index,
         ticket=1000 + tp_index,
         signal_id="sig-1",
-        group_name="TechnicalPips6273",
+        group_name="ChannelB",
         tp_index=tp_index,
         tp_price=4300.0 if tp_index == 4 else 4295.0 if tp_index == 5 else 4285.0,
         lot=0.01,
@@ -70,7 +70,7 @@ def _trade(tp_index: int, **kw) -> TradeRecord:
         status="open",
         zone_low=4315,
         zone_high=4318,
-        telegram_username="TechnicalPips6273",
+        telegram_username="ChannelB",
     )
     data.update(kw)
     return TradeRecord(**data)
@@ -78,9 +78,9 @@ def _trade(tp_index: int, **kw) -> TradeRecord:
 
 def test_excel_filename_includes_group(tmp_path: Path):
     reporter = ExcelReporter(tmp_path, ZoneInfo("Asia/Jerusalem"))
-    path = reporter.write_month("TechnicalPips6273", 2026, 10, [_signal()], [_trade(4)])
-    assert path.name == "TechnicalPips6273_2026-10.xlsx"
-    assert path.parent.name == "TechnicalPips6273"
+    path = reporter.write_month("ChannelB", 2026, 10, [_signal()], [_trade(4)])
+    assert path.name == "ChannelB_2026-10.xlsx"
+    assert path.parent.name == "ChannelB"
 
 
 def test_excel_detail_is_one_to_one_with_signal_tps(tmp_path: Path):
@@ -95,7 +95,7 @@ def test_excel_detail_is_one_to_one_with_signal_tps(tmp_path: Path):
     )
     open_leg = _trade(5)
     path = reporter.write_month(
-        "TechnicalPips6273",
+        "ChannelB",
         2026,
         10,
         [_signal()],

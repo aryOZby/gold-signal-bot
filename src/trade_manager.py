@@ -24,6 +24,7 @@ from .models import (
     TradeRecord,
     TradeStatus,
 )
+from .risk import daily_loss_reached, risk_lot, validate_signal
 from .stats import max_tp_hit
 from .timeutil import pips_from_prices, safety_levels, utcnow
 
@@ -354,11 +355,52 @@ class TradingEngine:
             )
             return
 
+        risk = self.cfg.risk
+        market_price = self._safe_price(symbol) if (risk.sanity_checks or risk.uses_risk_percent) else None
+
+        if self._daily_loss_blocked(received):
+            self._skip_signal(
+                signal_id, item, symbol, "daily_loss_limit",
+                f"דולג איתות מ-{item.group.name}: הגעת למגבלת ההפסד היומית. "
+                "פוזיציות פתוחות לא נסגרו.",
+            )
+            return
+
+        if risk.sanity_checks:
+            problem = validate_signal(
+                item.parsed,
+                market_price=market_price,
+                max_sl_pips=risk.max_sl_pips,
+                pip_size=self.cfg.pip_size,
+            )
+            if problem:
+                self._skip_signal(
+                    signal_id, item, symbol, problem,
+                    f"איתות מ-{item.group.name} נדחה בבדיקת תקינות: {problem}",
+                )
+                return
+
+        if risk.uses_risk_percent:
+            lot = self._risk_lot(symbol, item.parsed, market_price, legs=len(tradable))
+            if lot is None:
+                self._skip_signal(
+                    signal_id, item, symbol, "risk_lot_unavailable",
+                    f"דולג איתות מ-{item.group.name}: לא ניתן לחשב לוט לפי אחוז סיכון "
+                    "(יתרה לא זמינה או שהלוט המינימלי חורג מהסיכון).",
+                )
+                return
+        else:
+            lot = self._order_lot(item.group)
+
         rec = _new_signal(signal_id, item, symbol, SignalStatus.ACTIVE.value, "")
         self.db.insert_signal(rec)
 
         magic = item.group.magic or self.cfg.magic_number
-        lot = self._order_lot(item.group)
+        _LOG.info(
+            "Signal %s %s %s SL=%s legs=%s lot=%s (%s)",
+            signal_id, item.parsed.side.value, symbol, item.parsed.sl,
+            [f"TP{i}@{p}" for i, p in tradable], lot, risk.lot_mode,
+        )
         # --- EXECUTE FIRST, persist after each fill ---
         any_ok = False
         for index, tp_price in tradable:
@@ -474,6 +516,71 @@ class TradingEngine:
         if override != group.lot:
             _LOG.info("Using chart lot %s instead of config %s", override, group.lot)
         return override
+
+    def _skip_signal(self, signal_id: str, item: IncomingSignal, symbol: str, reason: str, message: str) -> None:
+        rec = _new_signal(signal_id, item, symbol, SignalStatus.SKIPPED.value, reason)
+        self.db.insert_signal(rec)
+        self._queue_report(item.group.name, item.received_at)
+        _LOG.warning("Signal %s skipped: %s", signal_id, reason)
+        self.alert(message, None)
+
+    def _safe_price(self, symbol: str) -> Optional[float]:
+        try:
+            return self.broker.last_price(symbol)
+        except Exception:
+            _LOG.exception("last_price failed for %s", symbol)
+            return None
+
+    def _safe_balance(self) -> Optional[float]:
+        try:
+            return self.broker.account_balance()
+        except Exception:
+            _LOG.exception("account_balance failed")
+            return None
+
+    def _risk_lot(
+        self, symbol: str, parsed: ParsedSignal, market_price: Optional[float], legs: int
+    ) -> Optional[float]:
+        risk = self.cfg.risk
+        balance = self._safe_balance()
+        if not balance:
+            _LOG.error("risk_percent sizing needs the account balance, broker returned none")
+            return None
+        try:
+            value = self.broker.value_per_price_unit(symbol)
+        except Exception:
+            _LOG.exception("value_per_price_unit failed for %s", symbol)
+            value = None
+        entry = market_price or (parsed.zone_low + parsed.zone_high) / 2.0
+        lot = risk_lot(
+            balance=balance,
+            risk_percent=risk.risk_percent,
+            entry=entry,
+            sl=parsed.sl,
+            legs=legs,
+            value_per_price_unit=value or risk.contract_value,
+            min_lot=risk.min_lot,
+            max_lot=risk.max_lot,
+            lot_step=risk.lot_step,
+        )
+        _LOG.info(
+            "Risk sizing: balance=%.2f risk=%.2f%% entry=%s sl=%s legs=%s -> lot=%s",
+            balance, risk.risk_percent, entry, parsed.sl, legs, lot,
+        )
+        return lot
+
+    def _daily_loss_blocked(self, now: datetime) -> bool:
+        risk = self.cfg.risk
+        if risk.daily_loss_limit <= 0 and risk.daily_loss_limit_percent <= 0:
+            return False
+        local = now.astimezone(self.cfg.tz)
+        start = local.replace(hour=0, minute=0, second=0, microsecond=0)
+        pnl = self.db.realised_pnl_between(start, start + timedelta(days=1))
+        balance = self._safe_balance() if risk.daily_loss_limit_percent > 0 else None
+        blocked = daily_loss_reached(pnl, balance, risk.daily_loss_limit, risk.daily_loss_limit_percent)
+        if blocked:
+            _LOG.warning("Daily loss limit reached: realised P/L today %.2f", pnl)
+        return blocked
 
     def _skip_first_tps(self, group: Optional[GroupConfig]) -> int:
         if group is not None and group.skip_first_tps is not None:
@@ -733,6 +840,10 @@ class TradingEngine:
         if fresh.max_concurrent_signals != self.cfg.max_concurrent_signals:
             self.cfg.max_concurrent_signals = fresh.max_concurrent_signals
             changes.append(f"איתותים במקביל: {fresh.max_concurrent_signals or 'ללא הגבלה'}")
+
+        if fresh.risk != self.cfg.risk:
+            self.cfg.risk = fresh.risk
+            changes.append(f"ניהול סיכונים: lot_mode={fresh.risk.lot_mode}")
 
         if changes:
             _LOG.info("Config reloaded: %s", "; ".join(changes))

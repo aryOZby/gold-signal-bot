@@ -13,7 +13,9 @@ from .base import Broker
 class DryRunBroker(Broker):
     """In-memory broker for tests and first-run validation. No real orders."""
 
-    def __init__(self, fill_offset: float = 0.0):
+    def __init__(self, fill_offset: float = 0.0, balance: float = 10_000.0, contract_value: float = 100.0):
+        self._balance = balance
+        self._contract_value = contract_value
         self._lock = threading.Lock()
         self._positions: dict[int, BrokerPosition] = {}
         self._closed: dict[int, ClosedDeal] = {}
@@ -96,6 +98,15 @@ class DryRunBroker(Broker):
 
     def last_price(self, symbol: str) -> Optional[float]:
         return self._last_price.get(symbol)
+
+    def account_balance(self) -> Optional[float]:
+        return self._balance
+
+    def value_per_price_unit(self, symbol: str) -> Optional[float]:
+        return self._contract_value
+
+    def set_balance(self, balance: float) -> None:
+        self._balance = balance
 
     def simulate_close(
         self,

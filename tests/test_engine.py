@@ -421,13 +421,13 @@ def test_two_groups_keep_separate_strategies(tmp_path: Path):
 def _production_groups() -> list[GroupConfig]:
     """בדיוק מה שנכנס ל-config.yaml בשרת."""
     return [
-        GroupConfig("group_a", -1002001216034, 0.01, magic=260908,
+        GroupConfig("group_a", -1001234567890, 0.01, magic=260908,
                     skip_first_tps=2, take_farthest_tps=3, breakeven_after_tp=3),
-        GroupConfig("TechnicalPips6273", -1001569906975, 0.01,
-                    username="TechnicalPips6273", magic=260909,
+        GroupConfig("ChannelB", -1009876543210, 0.01,
+                    username="ChannelB", magic=260909,
                     skip_first_tps=2, take_farthest_tps=3, breakeven_after_tp=3),
-        GroupConfig("profit_kings", -1002984909577, 0.01,
-                    username="profitkingscalper_007", magic=260910,
+        GroupConfig("channel_c", -1005556667778, 0.01,
+                    username="example_channel_c", magic=260910,
                     skip_first_tps=0, take_farthest_tps=0, breakeven_after_tp=1),
     ]
 
@@ -484,17 +484,17 @@ def test_production_config_end_to_end(tmp_path: Path):
     paths = {g.name: Path(engine._write_excel(g.name, now, final=False)) for g in (vip, pips, kings)}
     assert len({p.resolve() for p in paths.values()}) == 3
     assert paths["group_a"].parent.name == "group_a"
-    assert paths["profit_kings"].parent.name == "profit_kings"
+    assert paths["channel_c"].parent.name == "channel_c"
 
     sheet_vip = load_workbook(paths["group_a"])["עסקאות"]
-    sheet_kings = load_workbook(paths["profit_kings"])["עסקאות"]
+    sheet_kings = load_workbook(paths["channel_c"])["עסקאות"]
     assert {sheet_vip.cell(r, 1).value for r in range(2, sheet_vip.max_row + 1)} == {"group_a"}
-    assert {sheet_kings.cell(r, 1).value for r in range(2, sheet_kings.max_row + 1)} == {"profit_kings"}
+    assert {sheet_kings.cell(r, 1).value for r in range(2, sheet_kings.max_row + 1)} == {"channel_c"}
     assert sheet_vip.max_row == 4      # 3 עסקאות + כותרת
     assert sheet_kings.max_row == 3    # 2 עסקאות + כותרת
 
     # קבוצה בלי פעילות מקבלת קובץ עם כותרת בלבד.
-    sheet_pips = load_workbook(paths["TechnicalPips6273"])["עסקאות"]
+    sheet_pips = load_workbook(paths["ChannelB"])["עסקאות"]
     assert sheet_pips.max_row == 1
 
 
@@ -553,7 +553,7 @@ def test_monthly_email_attaches_a_file_per_group(tmp_path: Path):
 
     assert engine.send_monthly_email(now.year, now.month, paths) is True
     assert len(sent["attachments"]) == 3
-    assert "group_a" in sent["body"] and "profit_kings" in sent["body"]
+    assert "group_a" in sent["body"] and "channel_c" in sent["body"]
 
 
 def test_daily_digest_can_be_switched_off(tmp_path: Path):
@@ -644,7 +644,7 @@ def test_disabled_group_is_recorded_but_not_traded(tmp_path: Path):
     engine._handle(_incoming(SELL, pips, 502))
     trades = db.trades_for_signal(db.active_signals()[0].id)
     assert [t.tp_index for t in trades] == [4, 5, 6]
-    assert all(t.group_name == "TechnicalPips6273" for t in trades)
+    assert all(t.group_name == "ChannelB" for t in trades)
 
 
 def test_describe_groups_marks_disabled():
@@ -653,8 +653,8 @@ def test_describe_groups_marks_disabled():
     groups = _production_groups()
     groups[0].enabled = False
     text = describe_groups(groups)
-    assert "group_a=-1002001216034 [מושבתת]" in text
-    assert "TechnicalPips6273=@TechnicalPips6273(-1001569906975)," in text + ","
+    assert "group_a=-1001234567890 [מושבתת]" in text
+    assert "ChannelB=@ChannelB(-1009876543210)," in text + ","
 
 
 def test_chart_lot_input_overrides_config(tmp_path: Path):

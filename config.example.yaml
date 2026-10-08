@@ -4,17 +4,17 @@ dry_run: true
 telegram:
   session_name: gold_signal_bot
   groups:
-    # אסטרטגיה א' — VIP Signals + Technical Pips: אותה תבנית, אותם כללים.
+    # אסטרטגיה א' — ערוץ A + ערוץ B: אותה תבנית, אותם כללים.
     - name: group_a
-      chat_id: -1002001216034
+      chat_id: -1001234567890
       lot: 0.01
       magic: 260908
       skip_first_tps: 2
       take_farthest_tps: 3
       breakeven_after_tp: 3
       enabled: true
-    - name: TechnicalPips6273
-      username: TechnicalPips6273
+    - name: ChannelB
+      username: ChannelB
       lot: 0.01
       magic: 260909
       skip_first_tps: 2
@@ -22,8 +22,8 @@ telegram:
       breakeven_after_tp: 3
       enabled: true
     # אסטרטגיה ב' — כבויה בינתיים.
-    # - name: profit_kings
-    #   username: profitkingscalper_007
+    # - name: channel_c
+    #   username: example_channel_c
     #   lot: 0.01
     #   magic: 260910
     #   skip_first_tps: 0
@@ -57,6 +57,27 @@ trading:
   magic_number: 260908
   deviation: 30
   order_retries: 1
+
+# Risk controls — all off by default, so behaviour matches previous versions.
+# Hot-reloaded like the lot size: edit and save, applied within ~5 seconds.
+risk:
+  # fixed = use each group's `lot`. risk_percent = size every signal from balance and SL distance.
+  lot_mode: fixed
+  # % of balance lost if SL is hit, split evenly across the signal's TP legs.
+  risk_percent: 1.0
+  min_lot: 0.01
+  max_lot: 1.0
+  lot_step: 0.01
+  # $ per 1.0 price move per lot, used only if the broker can't report it (XAUUSD = 100).
+  contract_value: 100
+  # Reject signals with SL/TP on the wrong side, or when price is already past the SL.
+  sanity_checks: false
+  # 0 = no limit. Reject signals whose SL is farther than this many pips from entry.
+  max_sl_pips: 0
+  # Stop opening NEW signals after today's realised loss reaches this amount / percent.
+  # 0 = off. Open positions are never closed by this rule.
+  daily_loss_limit: 0
+  daily_loss_limit_percent: 0
 
 broker:
   # On a Windows VPS with MT5 installed, change to mt5_native and set dry_run: false

@@ -279,6 +279,18 @@ class Database:
             ).fetchall()
         return [self._trade_from_row(r) for r in rows]
 
+    def realised_pnl_between(self, start: datetime, end: datetime) -> float:
+        """Sum of profit for trades closed in [start, end), across all groups."""
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT COALESCE(SUM(profit), 0) FROM trades
+                WHERE status='closed' AND exit_time >= ? AND exit_time < ?
+                """,
+                (iso(start), iso(end)),
+            ).fetchone()
+        return float(row[0] or 0.0)
+
     def signals_in_range(
         self, group_name: str, start: datetime, end: datetime
     ) -> list[SignalRecord]:
