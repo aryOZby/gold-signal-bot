@@ -1,42 +1,42 @@
 timezone: Asia/Jerusalem
-dry_run: true
+dry_run: false
 
 telegram:
   session_name: gold_signal_bot
   groups:
-    # אסטרטגיה א' — ערוץ A + ערוץ B: אותה תבנית, אותם כללים.
     - name: group_a
-      chat_id: -1001234567890
+      chat_id: -1002001216034
       lot: 0.01
       magic: 260908
       skip_first_tps: 2
       take_farthest_tps: 3
       breakeven_after_tp: 3
-      enabled: true
-    - name: ChannelB
-      username: ChannelB
-      lot: 0.01
+      enabled: false
+    - name: TechnicalPips6273
+      username: TechnicalPips6273
+      chat_id: -1001569906975
+      lot: 0.05
       magic: 260909
       skip_first_tps: 2
       take_farthest_tps: 3
       breakeven_after_tp: 3
       enabled: true
-    # אסטרטגיה ב' — כבויה בינתיים.
-    # - name: channel_c
-    #   username: example_channel_c
-    #   lot: 0.01
-    #   magic: 260910
-    #   skip_first_tps: 0
-    #   take_farthest_tps: 0
-    #   breakeven_after_tp: 1
-    #   enabled: false
-  admin_chat_id: 0
+    - name: profit_kings
+      username: profitkingscalper_007
+      lot: 0.01
+      magic: 260910
+      skip_first_tps: 0
+      take_farthest_tps: 3
+      breakeven_after_tp: 1
+      enabled: false
+  admin_chat_id: 167570482
 
 trading:
   # מתג ראשי. false = ממשיך להאזין ולתעד באקסל, אבל לא פותח פוזיציות.
   # אפשר לשנות תוך כדי ריצה — הבוט קולט את זה תוך כ-5 שניות.
   enabled: true
-  symbol_override: ""
+  # JustMarkets Live3: הסימול בגרף הוא XAUUSD.c.m (לא XAUUSD.s של דמו).
+  symbol_override: "XAUUSD.c.m"
   # 0 = בלי הגבלה. שתי קבוצות (ואיתותים נוספים) יכולות לרוץ במקביל.
   # התיעוד נשאר נפרד לכל קבוצה.
   max_concurrent_signals: 0
@@ -80,8 +80,7 @@ risk:
   daily_loss_limit_percent: 0
 
 broker:
-  # On a Windows VPS with MT5 installed, change to mt5_native and set dry_run: false
-  type: dry_run
+  type: mt5_native
   common_files_dir: ""
 
 excel:
