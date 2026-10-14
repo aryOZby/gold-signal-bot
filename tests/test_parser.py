@@ -96,6 +96,29 @@ def test_parse_plan_buy_template():
     assert sig.sl == 4381
 
 
+STYLED_BUY = """#XAUUSD BUY 4152-4158
+
+𝐓𝐏 ( ❶ ) 4168
+𝐓𝐏 ( ❷ ) 4176
+𝐓𝐏 ( ❸ ) 4185
+𝐓𝐏 ( ❹ ) 4193
+𝐓𝐏 ( ❺ ) 4200
+𝐓𝐏 ( ❻ ) 4210
+
+𝐒𝐋 4140
+"""
+
+
+def test_parse_unicode_tp_with_circled_index():
+    sig = parse_signal(STYLED_BUY)
+    assert sig is not None
+    assert sig.side is Side.BUY
+    assert sig.zone_low == 4152
+    assert sig.zone_high == 4158
+    assert sig.tps == (4168, 4176, 4185, 4193, 4200, 4210)
+    assert sig.sl == 4140
+
+
 def test_ignore_non_signal():
     assert parse_signal("good morning") is None
     assert parse_signal("#XAUUSD SELL 4315-4318\nTP 4312") is None  # no SL

@@ -50,6 +50,7 @@ class Mt5NativeBroker(Broker):
         self.server = server
         self.path = path
         self._connected = False
+        self._symbol_fallback_logged: set[str] = set()
 
     def connect(self) -> None:
         errors = []
@@ -349,7 +350,8 @@ class Mt5NativeBroker(Broker):
                 info = mt5.symbol_info(candidate)
                 tick = mt5.symbol_info_tick(candidate)
                 if info is not None and tick is not None and float(tick.ask or 0) > 0:
-                    if candidate != symbol:
+                    if candidate != symbol and symbol not in self._symbol_fallback_logged:
+                        self._symbol_fallback_logged.add(symbol)
                         _LOG.warning("Using broker symbol %s instead of %s", candidate, symbol)
                     return candidate
                 time.sleep(0.15)
@@ -360,7 +362,7 @@ class Mt5NativeBroker(Broker):
         stem = symbol.split(".")[0].upper()
         extras = []
         if stem == "XAUUSD":
-            extras = ["XAUUSD.s", "XAUUSD.m", "XAUUSD", "GOLD"]
+            extras = ["XAUUSD.c", "XAUUSD.c.m", "XAUUSD.s", "XAUUSD.m", "XAUUSD", "GOLD"]
         elif stem.startswith("XAU") or stem == "GOLD":
             extras = [stem]
         for row in mt5.symbols_get() or []:

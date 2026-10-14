@@ -70,6 +70,13 @@ class TelegramService:
             return
         parsed = parse_signal(text)
         if parsed is None:
+            if text.strip():
+                _LOG.info(
+                    "Not a signal from %s chat_id=%s. Preview: %s",
+                    group.name,
+                    chat_id,
+                    text[:120],
+                )
             return
         received = msg.date
         if received is None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from typing import Optional
 
 from .models import ParsedSignal, Side
@@ -25,6 +26,7 @@ _DASHES = str.maketrans(
 # שתי התבניות הנתמכות:
 #   #XAUUSD SELL 4315-4318   /  TP 4312      /  SL 4327
 #   XAUUSD SELL PLAN @4365_4368  /  tp @4349  /  SL@4381
+#   𝐓𝐏 ( ❷ ) 4176  — אותיות מעוצבות ומספר בסוגריים
 _HEADER = re.compile(
     r"^#?\s*(?P<symbol>[A-Za-z0-9._]+)\s+"
     r"(?P<side>BUY|SELL)"
@@ -33,14 +35,17 @@ _HEADER = re.compile(
     re.IGNORECASE,
 )
 _TP = re.compile(
-    r"^T(?:P|ake\s*Profit)\s*[:@]?\s*@?(?P<price>\d+(?:\.\d+)?)\s*$", re.IGNORECASE
+    r"^T(?:P|ake\s*Profit)\s*(?:\([^)]*\))?\s*[:@]?\s*@?(?P<price>\d+(?:\.\d+)?)\s*$",
+    re.IGNORECASE,
 )
 _SL = re.compile(
-    r"^S(?:L|top(?:\s*Loss)?)\s*[:@]?\s*@?(?P<price>\d+(?:\.\d+)?)\s*$", re.IGNORECASE
+    r"^S(?:L|top(?:\s*Loss)?)\s*(?:\([^)]*\))?\s*[:@]?\s*@?(?P<price>\d+(?:\.\d+)?)\s*$",
+    re.IGNORECASE,
 )
 
 
 def _normalize(text: str) -> str:
+    text = unicodedata.normalize("NFKC", text)
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = text.translate(_DASHES)
     lines = [" ".join(line.strip().split()) for line in text.split("\n")]
