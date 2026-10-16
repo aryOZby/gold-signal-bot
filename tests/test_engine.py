@@ -722,6 +722,22 @@ def test_broken_config_does_not_stop_the_bot(tmp_path: Path):
     assert alerts and "שגיאה" in alerts[0]
 
 
+def test_empty_override_uses_open_chart_symbol(tmp_path: Path):
+    from src.brokers.mt5_native import pick_chart_gold
+
+    assert pick_chart_gold(["XAUUSD.c.m", "XAUUSD.c"]) == "XAUUSD.c"
+    assert pick_chart_gold(["GOLD", "XAUUSD.s"]) == "XAUUSD.s"
+
+    engine, db, broker = _engine(tmp_path)
+    engine.cfg.symbol_override = ""
+    broker.chart = "XAUUSD.c"
+    broker.set_price("XAUUSD.c", 4150.0)
+    engine._handle(_incoming(SELL, engine.cfg.groups[0], 55))
+    trades = db.open_trades()
+    assert trades
+    assert all(t.symbol == "XAUUSD.c" for t in trades)
+
+
 def test_symbol_alert_fires_once_per_state_change(tmp_path: Path):
     engine, _db, broker = _engine(tmp_path)
     engine.cfg.symbol_override = "XAUUSD.s"

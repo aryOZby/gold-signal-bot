@@ -67,7 +67,7 @@ def main() -> int:
         return 1
 
     print("config.yaml תקין.\n")
-    print(f"סימול           : {cfg.symbol_override or '(מההודעה)'}")
+    print(f"סימול           : {cfg.symbol_override or '(גרף הזהב הפתוח ב-MT5)'}")
     print(f"מסחר פעיל       : {cfg.trading_enabled}")
     print(f"איתותים במקביל  : {cfg.max_concurrent_signals or 'ללא הגבלה'}")
     print(f"dry_run         : {cfg.dry_run}   broker: {cfg.broker_type}")

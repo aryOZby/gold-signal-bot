@@ -22,6 +22,7 @@ class DryRunBroker(Broker):
         self._tickets = itertools.count(1_000_001)
         self._fill_offset = fill_offset
         self._last_price: dict[str, float] = {}
+        self.chart: Optional[str] = None
 
     def connect(self) -> None:
         return
@@ -98,6 +99,9 @@ class DryRunBroker(Broker):
 
     def last_price(self, symbol: str) -> Optional[float]:
         return self._last_price.get(symbol)
+
+    def chart_symbol(self) -> Optional[str]:
+        return self.chart
 
     def account_balance(self) -> Optional[float]:
         return self._balance

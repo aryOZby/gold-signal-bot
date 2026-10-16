@@ -45,6 +45,10 @@ class Broker(ABC):
     def last_price(self, symbol: str) -> Optional[float]:
         raise NotImplementedError
 
+    def chart_symbol(self) -> Optional[str]:
+        """Gold symbol on the open chart / Market Watch, if the backend can tell."""
+        return None
+
     def account_balance(self) -> Optional[float]:
         """Account balance, or None when the backend can't report it."""
         return None

@@ -51,6 +51,7 @@ class Mt5NativeBroker(Broker):
         self.path = path
         self._connected = False
         self._symbol_fallback_logged: set[str] = set()
+        self._chart_symbol_logged: Optional[str] = None
 
     def connect(self) -> None:
         errors = []
@@ -87,11 +88,13 @@ class Mt5NativeBroker(Broker):
                     self.login,
                     info.login,
                 )
+            chart = self.chart_symbol()
             _LOG.info(
-                "Connected to MT5 account %s server %s path=%s",
+                "Connected to MT5 account %s server %s path=%s chart=%s",
                 info.login,
                 info.server,
                 kwargs.get("path") or "(attached)",
+                chart or "(no gold chart)",
             )
             return
         raise RuntimeError(
@@ -314,6 +317,29 @@ class Mt5NativeBroker(Broker):
             reason=_reason_from_deal(deal),
         )
 
+    def chart_symbol(self) -> Optional[str]:
+        """Gold symbol that is selected in Market Watch with a live tick — the open chart."""
+        if mt5 is None or not self._ensure_connected():
+            return None
+        live: list[str] = []
+        selected: list[str] = []
+        for row in mt5.symbols_get() or []:
+            name = getattr(row, "name", "") or ""
+            upper = name.upper()
+            if "XAU" not in upper and "GOLD" not in upper:
+                continue
+            tick = mt5.symbol_info_tick(name)
+            if tick is None or float(getattr(tick, "ask", 0) or 0) <= 0:
+                continue
+            live.append(name)
+            if getattr(row, "select", False):
+                selected.append(name)
+        chosen = pick_chart_gold(selected or live)
+        if chosen and chosen != self._chart_symbol_logged:
+            self._chart_symbol_logged = chosen
+            _LOG.info("Using open gold chart %s", chosen)
+        return chosen
+
     def last_price(self, symbol: str) -> Optional[float]:
         resolved = self._prepare_symbol(symbol)
         if resolved is None:
@@ -373,6 +399,26 @@ class Mt5NativeBroker(Broker):
             if name not in names:
                 names.append(name)
         return names
+
+
+def pick_chart_gold(names: list[str]) -> Optional[str]:
+    """Prefer a simple gold ticker (XAUUSD.c) over a timeframe-looking name (XAUUSD.c.m)."""
+    if not names:
+        return None
+
+    def rank(name: str) -> tuple:
+        upper = name.upper()
+        if upper == "XAUUSD.C":
+            return (0, name)
+        if upper.startswith("XAUUSD.") and upper.count(".") == 1:
+            return (1, name)
+        if upper == "XAUUSD":
+            return (2, name)
+        if "XAU" in upper:
+            return (3, name)
+        return (4, name)
+
+    return sorted(names, key=rank)[0]
 
 
 def _normalize_price(price: float, info) -> float:

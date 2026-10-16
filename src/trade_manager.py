@@ -289,7 +289,7 @@ class TradingEngine:
             return
 
         signal_id = _signal_id(item)
-        symbol = self.cfg.symbol_override or item.parsed.symbol
+        symbol = self._trade_symbol(item.parsed.symbol)
         received = item.received_at
 
         if not self.cfg.trading_enabled or not item.group.enabled:
@@ -763,14 +763,26 @@ class TradingEngine:
             else:
                 _LOG.error("Safety modify failed ticket=%s", trade.ticket)
 
+    def _trade_symbol(self, parsed_symbol: str = "XAUUSD") -> str:
+        """סימול לפקודה: override אם מילאו, אחרת גרף הזהב הפתוח ב-MT5."""
+        override = (self.cfg.symbol_override or "").strip()
+        if override:
+            return override
+        try:
+            chart = self.broker.chart_symbol()
+        except Exception:
+            _LOG.exception("chart_symbol failed")
+            chart = None
+        if chart:
+            return chart
+        return parsed_symbol
+
     def _check_symbol(self) -> None:
         """הסימול תלוי בחשבון שמחובר בטרמינל, והוא עלול להתחלף תוך כדי ריצה.
 
         מתריע רק כשהמצב משתנה, כדי לא להציף.
         """
-        symbol = self.cfg.symbol_override
-        if not symbol:
-            return
+        symbol = self._trade_symbol()
         ok = self.broker.last_price(symbol) is not None
         if ok == self._symbol_ok:
             return
@@ -782,7 +794,7 @@ class TradingEngine:
             _LOG.error("Symbol %s is NOT available — orders will fail", symbol)
             self.alert(
                 f"הסימול {symbol} לא זמין בחשבון שמחובר ב-MT5. כל פקודה תיכשל.\n"
-                f"בדוק לאיזה חשבון הטרמינל מחובר, או עדכן symbol_override ב-config.yaml.",
+                f"פתח גרף זהב ב-MT5 (למשל XAUUSD.c). ריק ב-symbol_override = הגרף הפתוח.",
                 None,
             )
 
@@ -844,6 +856,12 @@ class TradingEngine:
         if fresh.risk != self.cfg.risk:
             self.cfg.risk = fresh.risk
             changes.append(f"ניהול סיכונים: lot_mode={fresh.risk.lot_mode}")
+
+        if fresh.symbol_override != self.cfg.symbol_override:
+            old = self.cfg.symbol_override or "(גרף פתוח)"
+            self.cfg.symbol_override = fresh.symbol_override
+            new = self.cfg.symbol_override or "(גרף פתוח)"
+            changes.append(f"סימול: {old} -> {new}")
 
         if changes:
             _LOG.info("Config reloaded: %s", "; ".join(changes))

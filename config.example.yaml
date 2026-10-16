@@ -35,8 +35,8 @@ trading:
   # מתג ראשי. false = ממשיך להאזין ולתעד באקסל, אבל לא פותח פוזיציות.
   # אפשר לשנות תוך כדי ריצה — הבוט קולט את זה תוך כ-5 שניות.
   enabled: true
-  # JustMarkets Live3: הסימול ב-Market Watch הוא XAUUSD.c (לא XAUUSD.s של דמו).
-  symbol_override: "XAUUSD.c"
+  # ריק = לסחור על גרף הזהב הפתוח ב-MT5. לא צריך שם סימול.
+  symbol_override: ""
   # 0 = בלי הגבלה. שתי קבוצות (ואיתותים נוספים) יכולות לרוץ במקביל.
   # התיעוד נשאר נפרד לכל קבוצה.
   max_concurrent_signals: 0
