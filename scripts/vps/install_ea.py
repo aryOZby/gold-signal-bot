@@ -16,10 +16,12 @@ SRC = ROOT / "mt5" / "GoldSignalBridge.mq5"
 APP = Path.home() / "AppData" / "Roaming" / "MetaQuotes" / "Terminal"
 EDITORS = [
     Path(r"C:\Program Files\JustMarkets MetaTrader 5\metaeditor64.exe"),
+    Path(r"C:\Program Files\MetaTrader 5.speed\metaeditor64.exe"),
     Path(r"C:\Program Files\MetaTrader 5\metaeditor64.exe"),
 ]
 TERMINALS = [
     Path(r"C:\Program Files\JustMarkets MetaTrader 5\terminal64.exe"),
+    Path(r"C:\Program Files\MetaTrader 5.speed\terminal64.exe"),
     Path(r"C:\Program Files\MetaTrader 5\terminal64.exe"),
 ]
 
@@ -57,8 +59,9 @@ def main() -> int:
 
     print(f"מקור: {SRC}")
     print(f"  {first_inputs(SRC)}")
-    if "InpLot" not in SRC.read_text(encoding="utf-8", errors="replace"):
-        print("!! בקובץ המקור אין InpLot. git pull לא הצליח.")
+    source = SRC.read_text(encoding="utf-8", errors="replace")
+    if "InpLot" not in source or "InpListenPips" not in source:
+        print("!! בקובץ המקור חסר InpLot/InpListenPips. git pull לא הצליח.")
         return 1
 
     print("\nסוגר את MT5...")

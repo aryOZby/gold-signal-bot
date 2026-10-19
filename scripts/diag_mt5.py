@@ -73,7 +73,7 @@ def report_gold_symbols() -> Optional[str]:
     all_symbols = mt5.symbols_get() or []
     gold = [s.name for s in all_symbols if "XAU" in s.name.upper() or "GOLD" in s.name.upper()]
     print(f"  סימולי זהב אצל הברוקר ({len(gold)}): {', '.join(gold) if gold else 'לא נמצאו'}")
-    print(f"  symbol_override ב-config.yaml: {override or '(ריק - ישתמש בסימול מההודעה)'}")
+    print(f"  symbol_override ב-config.yaml: {override or '(ריק - גרף הזהב הפתוח)'}")
 
     target = override or "XAUUSD"
     if gold and target not in gold:

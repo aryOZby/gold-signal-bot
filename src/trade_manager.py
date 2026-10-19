@@ -67,6 +67,7 @@ class TradingEngine:
         self._guarded: set[int] = set()
         self._cfg_mtime: Optional[float] = None
         self._symbol_ok: Optional[bool] = None
+        self._chart_groups: Optional[dict[str, bool]] = None
         self.mailer = EmailSender(cfg.email)
 
     def start(self) -> None:
@@ -76,6 +77,7 @@ class TradingEngine:
             self.broker.connect()
             self._check_symbol()
             self._recover()
+            self._apply_chart_groups()
         except Exception:
             _LOG.exception("Broker not ready at startup — Telegram listener will still start")
             self.alert(
@@ -150,18 +152,43 @@ class TradingEngine:
                 if self._adopt_position(pos, magic):
                     adopted += 1
 
+        stale = self._clear_stale_active()
         _LOG.info(
-            "Recovery: %s open in DB, %s closed while down, %s orphan positions adopted",
+            "Recovery: %s open in DB, %s closed while down, %s orphan positions adopted, %s stale signals cleared",
             len(open_trades),
             closed,
             adopted,
+            len(stale),
         )
-        if closed or adopted:
+        if closed or adopted or stale:
             self.alert(
                 f"התאוששות אחרי הפעלה מחדש: {closed} עסקאות נסגרו בזמן שהבוט היה למטה, "
-                f"{adopted} פוזיציות אומצו.",
+                f"{adopted} פוזיציות אומצו, {len(stale)} איתותים תקועים שוחררו.",
                 None,
             )
+
+    def _clear_stale_active(self, group_name: Optional[str] = None) -> list[str]:
+        """איתות שנשאר active בלי פוזיציה פתוחה חוסם את הקבוצה לנצח — משחררים אותו."""
+        cleared: list[str] = []
+        for signal in self.db.active_signals():
+            if group_name and signal.group_name != group_name:
+                continue
+            open_legs = [
+                t for t in self.db.trades_for_signal(signal.id)
+                if t.status == TradeStatus.OPEN.value and t.ticket
+            ]
+            if open_legs:
+                continue
+            self.db.update_signal_status(
+                signal.id, SignalStatus.FAILED.value, skipped_reason="stale_active"
+            )
+            cleared.append(signal.id)
+            _LOG.warning(
+                "Cleared stale active signal %s (%s) — no open positions",
+                signal.id,
+                signal.group_name,
+            )
+        return cleared
 
     def _adopt_position(self, pos, magic: int) -> bool:
         """מאמץ פוזיציה חיה שאינה ב-DB כדי שתנוהל ותתועד כרגיל."""
@@ -270,6 +297,7 @@ class TradingEngine:
                     _LOG.exception("guard failed")
                 try:
                     self._maybe_reload_settings()
+                    self._apply_chart_groups()
                 except Exception:
                     _LOG.exception("config reload failed")
                 try:
@@ -288,8 +316,10 @@ class TradingEngine:
             _LOG.info("Duplicate telegram message ignored %s/%s", item.chat_id, item.telegram_msg_id)
             return
 
+        self._apply_chart_groups()
         signal_id = _signal_id(item)
-        symbol = self._trade_symbol(item.parsed.symbol)
+        chart = self._trade_symbol()
+        symbol = chart or item.parsed.symbol
         received = item.received_at
 
         if not self.cfg.trading_enabled or not item.group.enabled:
@@ -300,6 +330,7 @@ class TradingEngine:
             _LOG.warning("Signal %s recorded but not executed (%s)", signal_id, reason)
             return
 
+        self._clear_stale_active(item.group.name)
         active = self.db.active_signals()
         if any(s.group_name == item.group.name for s in active):
             rec = _new_signal(signal_id, item, symbol, SignalStatus.SKIPPED.value, "busy_group")
@@ -354,6 +385,20 @@ class TradingEngine:
                 None,
             )
             return
+
+        chart = self._trade_symbol()
+        if not chart:
+            rec = _new_signal(signal_id, item, symbol, SignalStatus.SKIPPED.value, "no_gold_chart")
+            self.db.insert_signal(rec)
+            self._queue_report(item.group.name, received)
+            _LOG.error("Signal %s skipped — no open gold chart (telegram symbol ignored)", signal_id)
+            self.alert(
+                f"איתות מ-{item.group.name} נקלט, אבל אין גרף זהב פתוח ב-MT5 — לא נפתחה פוזיציה. "
+                "פתח גרף XAUUSD.c (או GOLD) והשאר אותו פתוח.",
+                None,
+            )
+            return
+        symbol = chart
 
         risk = self.cfg.risk
         market_price = self._safe_price(symbol) if (risk.sanity_checks or risk.uses_risk_percent) else None
@@ -763,8 +808,8 @@ class TradingEngine:
             else:
                 _LOG.error("Safety modify failed ticket=%s", trade.ticket)
 
-    def _trade_symbol(self, parsed_symbol: str = "XAUUSD") -> str:
-        """סימול לפקודה: override אם מילאו, אחרת גרף הזהב הפתוח ב-MT5."""
+    def _trade_symbol(self) -> str:
+        """סימול לפקודה: גרף הזהב הפתוח. הסימול מההודעה בטלגרם לא משמש למסחר."""
         override = (self.cfg.symbol_override or "").strip()
         if override:
             return override
@@ -773,9 +818,7 @@ class TradingEngine:
         except Exception:
             _LOG.exception("chart_symbol failed")
             chart = None
-        if chart:
-            return chart
-        return parsed_symbol
+        return chart or ""
 
     def _check_symbol(self) -> None:
         """הסימול תלוי בחשבון שמחובר בטרמינל, והוא עלול להתחלף תוך כדי ריצה.
@@ -783,18 +826,24 @@ class TradingEngine:
         מתריע רק כשהמצב משתנה, כדי לא להציף.
         """
         symbol = self._trade_symbol()
-        ok = self.broker.last_price(symbol) is not None
+        ok = bool(symbol) and self.broker.last_price(symbol) is not None
         if ok == self._symbol_ok:
             return
         self._symbol_ok = ok
         if ok:
             _LOG.info("Symbol %s is available again", symbol)
             self.alert(f"הסימול {symbol} חזר להיות זמין. המסחר יכול להימשך.", None)
+            return
+        _LOG.error("Gold chart is NOT available — orders will be skipped")
+        if not symbol:
+            self.alert(
+                "אין גרף זהב פתוח ב-MT5. כל איתות ידולג עד שייפתח גרף (XAUUSD.c).",
+                None,
+            )
         else:
-            _LOG.error("Symbol %s is NOT available — orders will fail", symbol)
             self.alert(
                 f"הסימול {symbol} לא זמין בחשבון שמחובר ב-MT5. כל פקודה תיכשל.\n"
-                f"פתח גרף זהב ב-MT5 (למשל XAUUSD.c). ריק ב-symbol_override = הגרף הפתוח.",
+                f"פתח גרף זהב ב-MT5 (למשל XAUUSD.c).",
                 None,
             )
 
@@ -866,6 +915,39 @@ class TradingEngine:
         if changes:
             _LOG.info("Config reloaded: %s", "; ".join(changes))
             self.alert("עודכנו הגדרות:\n" + "\n".join(changes), None)
+        self._apply_chart_groups()
+
+    def _apply_chart_groups(self) -> None:
+        """Inputs ב-GoldSignalBridge דורסים enabled של config.yaml."""
+        extra: list[str] = []
+        getter = getattr(self.broker, "chart_files_dir", None)
+        if callable(getter):
+            folder = getter()
+            if folder:
+                extra.append(folder)
+        overlay = _read_chart_groups(self.cfg.common_files_dir, extra)
+        if overlay is None or overlay == self._chart_groups:
+            if overlay:
+                for group in self.cfg.groups:
+                    if group.name in overlay:
+                        group.enabled = overlay[group.name]
+            return
+        self._chart_groups = overlay
+        changes: list[str] = []
+        for group in self.cfg.groups:
+            if group.name not in overlay:
+                continue
+            new_value = overlay[group.name]
+            if group.enabled != new_value:
+                group.enabled = new_value
+                changes.append(
+                    f"{group.name}: פעילה {not new_value} -> {new_value} (מהגרף)"
+                )
+            else:
+                group.enabled = new_value
+        if changes:
+            _LOG.info("Chart groups: %s", "; ".join(changes))
+            self.alert("עודכנו קבוצות מהגרף:\n" + "\n".join(changes), None)
 
     def _guard_positions(self) -> None:
         """שומר בלתי תלוי באסטרטגיה: אף פוזיציה חיה לא נשארת בלי SL ו-TP.
@@ -1105,6 +1187,58 @@ def _read_chart_lot(common_files_dir: str) -> Optional[float]:
             continue
         if value > 0:
             return value
+    return None
+
+
+def _parse_bool_flag(raw: str) -> Optional[bool]:
+    token = raw.strip().lower()
+    if token in {"1", "true", "yes", "on"}:
+        return True
+    if token in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _read_chart_groups(common_files_dir: str, extra_dirs: list[str]) -> Optional[dict[str, bool]]:
+    """קורא אילו קבוצות להאזין מחלון Inputs של GoldSignalBridge (gs_groups.txt)."""
+    paths: list[Path] = []
+    for folder in extra_dirs:
+        if folder:
+            paths.append(Path(folder) / "gs_groups.txt")
+    if common_files_dir:
+        paths.append(Path(common_files_dir) / "gs_groups.txt")
+    paths.append(
+        Path.home()
+        / "AppData"
+        / "Roaming"
+        / "MetaQuotes"
+        / "Terminal"
+        / "Common"
+        / "Files"
+        / "gs_groups.txt"
+    )
+    seen: set[str] = set()
+    for path in paths:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not path.exists():
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        parsed: dict[str, bool] = {}
+        for line in lines:
+            if "=" not in line:
+                continue
+            name, raw = line.split("=", 1)
+            flag = _parse_bool_flag(raw)
+            if name.strip() and flag is not None:
+                parsed[name.strip()] = flag
+        if parsed:
+            return parsed
     return None
 
 

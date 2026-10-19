@@ -68,6 +68,8 @@ class TelegramService:
             if text.strip():
                 _LOG.info("Ignored chat_id=%s (not in config). Preview: %s", chat_id, text[:80])
             return
+        if not group.enabled:
+            return
         parsed = parse_signal(text)
         if parsed is None:
             if text.strip():

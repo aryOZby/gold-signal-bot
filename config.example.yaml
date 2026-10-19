@@ -11,7 +11,7 @@ telegram:
       skip_first_tps: 2
       take_farthest_tps: 3
       breakeven_after_tp: 3
-      enabled: false
+      enabled: false   # נדרס מחלון Inputs ב-GoldSignalBridge (Listen VIP)
     - name: TechnicalPips6273
       username: TechnicalPips6273
       chat_id: -1001569906975
@@ -35,7 +35,7 @@ trading:
   # מתג ראשי. false = ממשיך להאזין ולתעד באקסל, אבל לא פותח פוזיציות.
   # אפשר לשנות תוך כדי ריצה — הבוט קולט את זה תוך כ-5 שניות.
   enabled: true
-  # ריק = לסחור על גרף הזהב הפתוח ב-MT5. לא צריך שם סימול.
+  # ריק = תמיד גרף הזהב הפתוח ב-MT5. מה שכתוב בטלגרם (XAUUSD / GOLD / …) לא משנה.
   symbol_override: ""
   # 0 = בלי הגבלה. שתי קבוצות (ואיתותים נוספים) יכולות לרוץ במקביל.
   # התיעוד נשאר נפרד לכל קבוצה.

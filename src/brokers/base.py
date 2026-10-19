@@ -49,6 +49,10 @@ class Broker(ABC):
         """Gold symbol on the open chart / Market Watch, if the backend can tell."""
         return None
 
+    def chart_files_dir(self) -> Optional[str]:
+        """MQL5/Files of the connected terminal, if known."""
+        return None
+
     def account_balance(self) -> Optional[float]:
         """Account balance, or None when the backend can't report it."""
         return None

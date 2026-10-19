@@ -1,15 +1,18 @@
 #property copyright "gold-signal-bot"
-#property version   "1.10"
-#property description "Bridge: Python gold-signal-bot ↔ MT5 via Common/Files"
+#property version   "1.11"
+#property description "Bridge: Python gold-signal-bot ↔ MT5 via Files + Inputs"
 
 #include <Trade/Trade.mqh>
 
 // השמות אחרי // מופיעים בחלון Inputs ב-MT5.
-input double InpLot         = 0.01;                    // Lot (per position)
-input bool   InpDryRun      = false;                   // Dry run (no orders)
-input string InpMagicList   = "260908,260909,260910";  // Magics
-input int    InpTimerMs     = 50;                      // Timer ms
-input int    InpDeviation   = 30;                      // Deviation
+input double InpLot                 = 0.01;  // Lot (per position)
+input bool   InpListenVip           = false; // Listen VIP (group_a)
+input bool   InpListenPips          = true;  // Listen Technical Pips
+input bool   InpListenProfitKings   = false; // Listen profit_kings
+input bool   InpDryRun              = false; // Dry run (no orders)
+input string InpMagicList           = "260908,260909,260910"; // Magics
+input int    InpTimerMs             = 50;    // Timer ms
+input int    InpDeviation           = 30;    // Deviation
 
 CTrade trade;
 string lastPosKeys = "";
@@ -71,6 +74,7 @@ void ShowStatus()
    Comment(
       "GoldSignalBridge\n",
       "symbol : ", _Symbol, "\n",
+      "listen : ", ListenSummary(), "\n",
       "magics : ", InpMagicList, "\n",
       "lot    : ", lot, "\n",
       "mode   : ", (InpDryRun ? "DRY RUN - no orders sent" : "LIVE"), "\n",
@@ -85,13 +89,15 @@ int OnInit()
    trade.SetDeviationInPoints(InpDeviation);
    if(!EventSetMillisecondTimer(InpTimerMs))
       EventSetTimer(1);
-   PrintFormat("GoldSignalBridge started: symbol=%s magics=%s lot=%s mode=%s",
+   PrintFormat("GoldSignalBridge started: symbol=%s magics=%s lot=%s listen=%s mode=%s",
                _Symbol, InpMagicList,
                (InpLot > 0.0 ? DoubleToString(InpLot, 2) : "from bot"),
+               ListenSummary(),
                (InpDryRun ? "DRY RUN" : "LIVE"));
    if(InpDryRun)
       Print("WARNING: InpDryRun=true - commands are logged but no orders are sent.");
    WriteLot();
+   WriteGroups();
    ShowStatus();
    return INIT_SUCCEEDED;
 }
@@ -107,6 +113,7 @@ void OnTimer()
    WriteHeartbeat();
    WriteTick();
    WriteLot();
+   WriteGroups();
    ProcessCommands();
    DetectClosesAndWritePositions();
    ShowStatus();
@@ -121,13 +128,48 @@ void WriteHeartbeat()
    FileClose(h);
 }
 
-void WriteLot()
+void WriteTextFile(const string name, const string body, const bool common)
 {
-   int h = FileOpen("gs_lot.txt", FILE_WRITE|FILE_TXT|FILE_ANSI|FILE_COMMON);
+   int flags = FILE_WRITE|FILE_TXT|FILE_ANSI;
+   if(common)
+      flags |= FILE_COMMON;
+   int h = FileOpen(name, flags);
    if(h == INVALID_HANDLE)
       return;
-   FileWriteString(h, DoubleToString(InpLot, 4) + "\n");
+   FileWriteString(h, body);
    FileClose(h);
+}
+
+void WriteLot()
+{
+   string body = DoubleToString(InpLot, 4) + "\n";
+   WriteTextFile("gs_lot.txt", body, true);
+   WriteTextFile("gs_lot.txt", body, false);
+}
+
+string ListenSummary()
+{
+   string parts = "";
+   if(InpListenVip)
+      parts += "VIP ";
+   if(InpListenPips)
+      parts += "Pips ";
+   if(InpListenProfitKings)
+      parts += "Kings ";
+   if(StringLen(parts) == 0)
+      return "(none)";
+   StringTrimRight(parts);
+   return parts;
+}
+
+void WriteGroups()
+{
+   string body =
+      "group_a=" + IntegerToString(InpListenVip ? 1 : 0) + "\n" +
+      "TechnicalPips6273=" + IntegerToString(InpListenPips ? 1 : 0) + "\n" +
+      "profit_kings=" + IntegerToString(InpListenProfitKings ? 1 : 0) + "\n";
+   WriteTextFile("gs_groups.txt", body, true);
+   WriteTextFile("gs_groups.txt", body, false);
 }
 
 void WriteTick()

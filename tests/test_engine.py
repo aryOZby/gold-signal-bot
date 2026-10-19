@@ -8,7 +8,7 @@ from src.brokers.dry_run import DryRunBroker
 from src.config import AppConfig
 from src.db import Database
 from src.excel_report import ExcelReporter
-from src.models import CloseReason, GroupConfig, Side
+from src.models import CloseReason, GroupConfig, Side, SignalRecord, SignalStatus
 from src.parser import parse_signal
 from src.trade_manager import IncomingSignal, TradingEngine
 
@@ -85,6 +85,7 @@ def _engine(tmp: Path) -> tuple[TradingEngine, Database, DryRunBroker]:
     cfg.output_dir.mkdir(parents=True)
     db = Database(cfg.data_dir / "bot.db")
     broker = DryRunBroker()
+    broker.chart = "XAUUSD"
     broker.connect()
     reporter = ExcelReporter(cfg.output_dir, cfg.tz)
     engine = TradingEngine(cfg, db, broker, reporter)
@@ -174,6 +175,39 @@ def test_same_group_does_not_open_opposite_side(tmp_path: Path):
     assert open_trades
     assert all(t.side == "SELL" for t in open_trades)
     assert all(p.side is Side.SELL for p in broker.positions(engine.cfg.magic_number))
+
+
+def test_stale_active_signal_without_positions_does_not_block(tmp_path: Path):
+    from src.timeutil import utcnow
+
+    engine, db, broker = _engine(tmp_path)
+    engine.cfg.max_concurrent_signals = 0
+    group = engine.cfg.groups[0]
+    now = utcnow()
+    db.insert_signal(
+        SignalRecord(
+            id="stale-lock",
+            group_name=group.name,
+            chat_id=group.chat_id,
+            telegram_msg_id=1,
+            received_at=now,
+            symbol="XAUUSD",
+            side="SELL",
+            zone_low=4315,
+            zone_high=4318,
+            sl=4327,
+            raw_text="stale",
+            status=SignalStatus.ACTIVE.value,
+        )
+    )
+    engine._handle(_incoming(BUY, group, 2))
+    active = db.active_signals()
+    assert len(active) == 1
+    assert active[0].side == "BUY"
+    assert db.get_signal("stale-lock").status == SignalStatus.FAILED.value
+    assert db.get_signal("stale-lock").skipped_reason == "stale_active"
+    assert all(t.side == "BUY" for t in db.open_trades())
+    assert broker.positions(engine.cfg.magic_number)
 
 
 def test_two_groups_trade_in_parallel_when_unlimited(tmp_path: Path):
@@ -657,6 +691,28 @@ def test_describe_groups_marks_disabled():
     assert "ChannelB=@ChannelB(-1009876543210)," in text + ","
 
 
+def test_chart_groups_input_overrides_yaml_enabled(tmp_path: Path):
+    engine, db, broker = _engine(tmp_path)
+    files = tmp_path / "common"
+    files.mkdir()
+    (files / "gs_groups.txt").write_text(
+        "group_a=0\ngroup_b=1\n", encoding="utf-8"
+    )
+    engine.cfg.common_files_dir = str(files)
+    engine.cfg.groups[0].enabled = True
+    engine.cfg.groups[1].enabled = True
+    engine.cfg.max_concurrent_signals = 0
+
+    engine._handle(_incoming(SELL, engine.cfg.groups[0], 88))
+    window = (datetime(2020, 1, 1, tzinfo=timezone.utc), datetime(2030, 1, 1, tzinfo=timezone.utc))
+    assert [s.skipped_reason for s in db.signals_in_range("group_a", *window)] == ["group_disabled"]
+    assert broker.positions(engine.cfg.magic_number) == []
+
+    engine._handle(_incoming(SELL, engine.cfg.groups[1], 89))
+    assert db.active_signals()
+    assert all(s.group_name == "group_b" for s in db.active_signals())
+
+
 def test_chart_lot_input_overrides_config(tmp_path: Path):
     engine, db, broker = _engine(tmp_path)
     files = tmp_path / "common"
@@ -736,6 +792,31 @@ def test_empty_override_uses_open_chart_symbol(tmp_path: Path):
     trades = db.open_trades()
     assert trades
     assert all(t.symbol == "XAUUSD.c" for t in trades)
+
+
+def test_telegram_symbol_is_ignored_for_orders(tmp_path: Path):
+    engine, db, broker = _engine(tmp_path)
+    engine.cfg.symbol_override = ""
+    broker.chart = "XAUUSD.c"
+    broker.set_price("XAUUSD.c", 4150.0)
+    gold_msg = SELL.replace("XAUUSD", "GOLD")
+    engine._handle(_incoming(gold_msg, engine.cfg.groups[0], 56))
+    trades = db.open_trades()
+    assert trades
+    assert all(t.symbol == "XAUUSD.c" for t in trades)
+
+
+def test_no_gold_chart_skips_instead_of_using_telegram_symbol(tmp_path: Path):
+    engine, db, broker = _engine(tmp_path)
+    engine.cfg.symbol_override = ""
+    broker.chart = None
+    group = engine.cfg.groups[0]
+    engine._handle(_incoming(SELL, group, 57))
+    window = (datetime(2020, 1, 1, tzinfo=timezone.utc), datetime(2030, 1, 1, tzinfo=timezone.utc))
+    signals = db.signals_in_range(group.name, *window)
+    assert [s.skipped_reason for s in signals] == ["no_gold_chart"]
+    assert db.open_trades() == []
+    assert broker.positions(engine.cfg.magic_number) == []
 
 
 def test_symbol_alert_fires_once_per_state_change(tmp_path: Path):

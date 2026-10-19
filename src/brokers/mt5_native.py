@@ -112,14 +112,19 @@ class Mt5NativeBroker(Broker):
         )
 
     def _init_attempts(self) -> list[tuple[dict, bool]]:
-        """(kwargs, shutdown_first). הניסיון הראשון נצמד לטרמינל החי."""
+        """(kwargs, shutdown_first).
+
+        אם יש MT5_TERMINAL_PATH — מתחילים ממנו (אחרת נצמדים לטרמינל הלא נכון
+        כשיש כמה MT5 פתוחים). בלי נתיב — קודם attach לטרמינל שכבר רץ.
+        """
         attempts: list[tuple[dict, bool]] = []
-        attempts.append(({"timeout": 60_000}, False))
         paths: list[Optional[str]] = []
         if self.path:
             paths.append(self.path)
-        paths.extend(_discover_terminals())
-        paths.append(None)
+        else:
+            attempts.append(({"timeout": 60_000}, False))
+            paths.extend(_discover_terminals())
+            paths.append(None)
         seen = {""}
         for path in paths:
             key = path or ""
@@ -339,6 +344,15 @@ class Mt5NativeBroker(Broker):
             self._chart_symbol_logged = chosen
             _LOG.info("Using open gold chart %s", chosen)
         return chosen
+
+    def chart_files_dir(self) -> Optional[str]:
+        if mt5 is None or not self._connected:
+            return None
+        term = mt5.terminal_info()
+        data = getattr(term, "data_path", None) if term is not None else None
+        if not data:
+            return None
+        return str(Path(data) / "MQL5" / "Files")
 
     def last_price(self, symbol: str) -> Optional[float]:
         resolved = self._prepare_symbol(symbol)
