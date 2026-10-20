@@ -60,8 +60,8 @@ def main() -> int:
     print(f"מקור: {SRC}")
     print(f"  {first_inputs(SRC)}")
     source = SRC.read_text(encoding="utf-8", errors="replace")
-    if "InpLot" not in source or "InpListenPips" not in source:
-        print("!! בקובץ המקור חסר InpLot/InpListenPips. git pull לא הצליח.")
+    if "InpLotPips" not in source or "InpListenPips" not in source:
+        print("!! בקובץ המקור חסר InpLotPips/InpListenPips. git pull לא הצליח.")
         return 1
 
     print("\nסוגר את MT5...")
@@ -112,15 +112,12 @@ def main() -> int:
             ex5 = dest.with_suffix(".ex5")
             print(f"     ex5 exists={ex5.exists()} size={ex5.stat().st_size if ex5.exists() else 0}")
 
-    terminal = next((p for p in TERMINALS if p.exists()), None)
-    if terminal is not None:
-        print(f"\nפותח MT5: {terminal}")
-        try:
-            os.startfile(str(terminal))  # type: ignore[attr-defined]
-        except AttributeError:
-            subprocess.Popen([str(terminal)])
-    print("\nעכשיו ב-MT5: הסר את ה-EA מהגרף (אם נשאר), גרור מחדש.")
-    print("בכותרת חייב להיות 1.10 ובקלטים: Lot / Dry run / Magics.")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from attach_ea import apply_to_terminals
+
+    print("\nמצמיד את ה-EA לגרפי הזהב דרך קבצי הטרמינל (בלי עכבר)...")
+    apply_to_terminals(kill=False, start=True)
+    print("בכותרת הגרף: GoldSignalBridge 1.12. F7 רק אם צריך לשנות לוט.")
     return 0
 
 

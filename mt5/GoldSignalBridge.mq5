@@ -1,14 +1,16 @@
 #property copyright "gold-signal-bot"
-#property version   "1.11"
+#property version   "1.12"
 #property description "Bridge: Python gold-signal-bot ↔ MT5 via Files + Inputs"
 
 #include <Trade/Trade.mqh>
 
 // השמות אחרי // מופיעים בחלון Inputs ב-MT5.
-input double InpLot                 = 0.01;  // Lot (per position)
 input bool   InpListenVip           = false; // Listen VIP (group_a)
+input double InpLotVip              = 0.01;  // Lot VIP
 input bool   InpListenPips          = true;  // Listen Technical Pips
+input double InpLotPips             = 0.05;  // Lot Technical Pips
 input bool   InpListenProfitKings   = false; // Listen profit_kings
+input double InpLotProfitKings      = 0.01;  // Lot profit_kings
 input bool   InpDryRun              = false; // Dry run (no orders)
 input string InpMagicList           = "260908,260909,260910"; // Magics
 input int    InpTimerMs             = 50;    // Timer ms
@@ -68,15 +70,12 @@ double NormalizeVolume(const string symbol, double volume)
 
 void ShowStatus()
 {
-   string lot = (InpLot > 0.0)
-                ? DoubleToString(InpLot, 2)
-                : "from bot";
    Comment(
       "GoldSignalBridge\n",
       "symbol : ", _Symbol, "\n",
       "listen : ", ListenSummary(), "\n",
+      "lots   : ", LotSummary(), "\n",
       "magics : ", InpMagicList, "\n",
-      "lot    : ", lot, "\n",
       "mode   : ", (InpDryRun ? "DRY RUN - no orders sent" : "LIVE"), "\n",
       "open   : ", IntegerToString(PositionsTotal())
    );
@@ -89,14 +88,12 @@ int OnInit()
    trade.SetDeviationInPoints(InpDeviation);
    if(!EventSetMillisecondTimer(InpTimerMs))
       EventSetTimer(1);
-   PrintFormat("GoldSignalBridge started: symbol=%s magics=%s lot=%s listen=%s mode=%s",
-               _Symbol, InpMagicList,
-               (InpLot > 0.0 ? DoubleToString(InpLot, 2) : "from bot"),
-               ListenSummary(),
+   PrintFormat("GoldSignalBridge started: symbol=%s magics=%s lots=%s listen=%s mode=%s",
+               _Symbol, InpMagicList, LotSummary(), ListenSummary(),
                (InpDryRun ? "DRY RUN" : "LIVE"));
    if(InpDryRun)
       Print("WARNING: InpDryRun=true - commands are logged but no orders are sent.");
-   WriteLot();
+   WriteLots();
    WriteGroups();
    ShowStatus();
    return INIT_SUCCEEDED;
@@ -112,7 +109,7 @@ void OnTimer()
 {
    WriteHeartbeat();
    WriteTick();
-   WriteLot();
+   WriteLots();
    WriteGroups();
    ProcessCommands();
    DetectClosesAndWritePositions();
@@ -140,11 +137,14 @@ void WriteTextFile(const string name, const string body, const bool common)
    FileClose(h);
 }
 
-void WriteLot()
+void WriteLots()
 {
-   string body = DoubleToString(InpLot, 4) + "\n";
-   WriteTextFile("gs_lot.txt", body, true);
-   WriteTextFile("gs_lot.txt", body, false);
+   string body =
+      "group_a=" + DoubleToString(InpLotVip, 4) + "\n" +
+      "TechnicalPips6273=" + DoubleToString(InpLotPips, 4) + "\n" +
+      "profit_kings=" + DoubleToString(InpLotProfitKings, 4) + "\n";
+   WriteTextFile("gs_lots.txt", body, true);
+   WriteTextFile("gs_lots.txt", body, false);
 }
 
 string ListenSummary()
@@ -160,6 +160,24 @@ string ListenSummary()
       return "(none)";
    StringTrimRight(parts);
    return parts;
+}
+
+string LotSummary()
+{
+   return "VIP " + DoubleToString(InpLotVip, 2)
+        + " | Pips " + DoubleToString(InpLotPips, 2)
+        + " | Kings " + DoubleToString(InpLotProfitKings, 2);
+}
+
+double LotForComment(const string comment)
+{
+   if(StringFind(comment, "group_a") >= 0 && InpLotVip > 0.0)
+      return InpLotVip;
+   if(StringFind(comment, "TechnicalPips") >= 0 && InpLotPips > 0.0)
+      return InpLotPips;
+   if(StringFind(comment, "profit_kings") >= 0 && InpLotProfitKings > 0.0)
+      return InpLotProfitKings;
+   return 0.0;
 }
 
 void WriteGroups()
@@ -243,8 +261,9 @@ void DoMarket(const string uid, string &parts[])
       return;
    }
 
-   if(InpLot > 0.0)
-      volume = InpLot;
+   double chartLot = LotForComment(comment);
+   if(chartLot > 0.0)
+      volume = chartLot;
    volume = NormalizeVolume(symbol, volume);
 
    if(InpDryRun)

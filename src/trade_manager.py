@@ -555,12 +555,33 @@ class TradingEngine:
         return next((g for g in self.cfg.groups if g.name == name), None)
 
     def _order_lot(self, group: GroupConfig) -> float:
-        override = _read_chart_lot(self.cfg.common_files_dir)
+        extra = self._chart_file_dirs()
+        per_group = _read_chart_group_lots(self.cfg.common_files_dir, extra)
+        if per_group is not None:
+            override = per_group.get(group.name)
+            if override is not None and override > 0:
+                if override != group.lot:
+                    _LOG.info(
+                        "Using chart lot %s for %s instead of config %s",
+                        override, group.name, group.lot,
+                    )
+                return override
+            return group.lot
+        override = _read_chart_lot(self.cfg.common_files_dir, extra)
         if override is None:
             return group.lot
         if override != group.lot:
             _LOG.info("Using chart lot %s instead of config %s", override, group.lot)
         return override
+
+    def _chart_file_dirs(self) -> list[str]:
+        extra: list[str] = []
+        getter = getattr(self.broker, "chart_files_dir", None)
+        if callable(getter):
+            folder = getter()
+            if folder:
+                extra.append(folder)
+        return extra
 
     def _skip_signal(self, signal_id: str, item: IncomingSignal, symbol: str, reason: str, message: str) -> None:
         rec = _new_signal(signal_id, item, symbol, SignalStatus.SKIPPED.value, reason)
@@ -919,12 +940,7 @@ class TradingEngine:
 
     def _apply_chart_groups(self) -> None:
         """Inputs ב-GoldSignalBridge דורסים enabled של config.yaml."""
-        extra: list[str] = []
-        getter = getattr(self.broker, "chart_files_dir", None)
-        if callable(getter):
-            folder = getter()
-            if folder:
-                extra.append(folder)
+        extra = self._chart_file_dirs()
         overlay = _read_chart_groups(self.cfg.common_files_dir, extra)
         if overlay is None or overlay == self._chart_groups:
             if overlay:
@@ -1166,14 +1182,30 @@ def select_breakeven_trigger(
     return min(farther, key=lambda item: item[0])
 
 
-def _read_chart_lot(common_files_dir: str) -> Optional[float]:
-    """קורא את הלוט מחלון Inputs של GoldSignalBridge (gs_lot.txt)."""
+def _ea_file_candidates(filename: str, common_files_dir: str, extra_dirs: list[str]) -> list[Path]:
     paths: list[Path] = []
+    for folder in extra_dirs:
+        if folder:
+            paths.append(Path(folder) / filename)
     if common_files_dir:
-        paths.append(Path(common_files_dir) / "gs_lot.txt")
-    paths.append(Path.home() / "AppData" / "Roaming" / "MetaQuotes" / "Terminal" / "Common" / "Files" / "gs_lot.txt")
+        paths.append(Path(common_files_dir) / filename)
+    paths.append(
+        Path.home()
+        / "AppData"
+        / "Roaming"
+        / "MetaQuotes"
+        / "Terminal"
+        / "Common"
+        / "Files"
+        / filename
+    )
+    return paths
+
+
+def _read_chart_lot(common_files_dir: str, extra_dirs: Optional[list[str]] = None) -> Optional[float]:
+    """קורא לוט גלובלי ישן מ-gs_lot.txt. אם יש gs_lots.txt — לא משתמשים בזה."""
     seen: set[str] = set()
-    for path in paths:
+    for path in _ea_file_candidates("gs_lot.txt", common_files_dir, extra_dirs or []):
         key = str(path)
         if key in seen:
             continue
@@ -1190,6 +1222,38 @@ def _read_chart_lot(common_files_dir: str) -> Optional[float]:
     return None
 
 
+def _read_chart_group_lots(
+    common_files_dir: str, extra_dirs: list[str]
+) -> Optional[dict[str, float]]:
+    """לוט לכל קבוצה מחלון Inputs (gs_lots.txt)."""
+    seen: set[str] = set()
+    for path in _ea_file_candidates("gs_lots.txt", common_files_dir, extra_dirs):
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not path.exists():
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        parsed: dict[str, float] = {}
+        for line in lines:
+            if "=" not in line:
+                continue
+            name, raw = line.split("=", 1)
+            try:
+                value = float(raw.strip())
+            except ValueError:
+                continue
+            if name.strip() and value > 0:
+                parsed[name.strip()] = value
+        if parsed:
+            return parsed
+    return None
+
+
 def _parse_bool_flag(raw: str) -> Optional[bool]:
     token = raw.strip().lower()
     if token in {"1", "true", "yes", "on"}:
@@ -1201,24 +1265,8 @@ def _parse_bool_flag(raw: str) -> Optional[bool]:
 
 def _read_chart_groups(common_files_dir: str, extra_dirs: list[str]) -> Optional[dict[str, bool]]:
     """קורא אילו קבוצות להאזין מחלון Inputs של GoldSignalBridge (gs_groups.txt)."""
-    paths: list[Path] = []
-    for folder in extra_dirs:
-        if folder:
-            paths.append(Path(folder) / "gs_groups.txt")
-    if common_files_dir:
-        paths.append(Path(common_files_dir) / "gs_groups.txt")
-    paths.append(
-        Path.home()
-        / "AppData"
-        / "Roaming"
-        / "MetaQuotes"
-        / "Terminal"
-        / "Common"
-        / "Files"
-        / "gs_groups.txt"
-    )
     seen: set[str] = set()
-    for path in paths:
+    for path in _ea_file_candidates("gs_groups.txt", common_files_dir, extra_dirs):
         key = str(path)
         if key in seen:
             continue

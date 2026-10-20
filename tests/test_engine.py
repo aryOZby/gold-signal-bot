@@ -713,6 +713,28 @@ def test_chart_groups_input_overrides_yaml_enabled(tmp_path: Path):
     assert all(s.group_name == "group_b" for s in db.active_signals())
 
 
+def test_chart_group_lots_override_per_group(tmp_path: Path):
+    engine, db, broker = _engine(tmp_path)
+    files = tmp_path / "common"
+    files.mkdir()
+    (files / "gs_lots.txt").write_text(
+        "group_a=0.07\ngroup_b=0.02\n", encoding="utf-8"
+    )
+    (files / "gs_lot.txt").write_text("0.99\n", encoding="utf-8")
+    engine.cfg.common_files_dir = str(files)
+    engine.cfg.max_concurrent_signals = 0
+
+    engine._handle(_incoming(SELL, engine.cfg.groups[0], 88))
+    trades_a = db.trades_for_signal(db.active_signals()[0].id)
+    assert trades_a
+    assert all(abs((t.lot or 0) - 0.07) < 1e-9 for t in trades_a)
+
+    engine._handle(_incoming(SELL, engine.cfg.groups[1], 89))
+    trades_b = [t for t in db.open_trades() if t.group_name == "group_b"]
+    assert trades_b
+    assert all(abs((t.lot or 0) - 0.02) < 1e-9 for t in trades_b)
+
+
 def test_chart_lot_input_overrides_config(tmp_path: Path):
     engine, db, broker = _engine(tmp_path)
     files = tmp_path / "common"
