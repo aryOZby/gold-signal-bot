@@ -31,7 +31,8 @@ _HEADER = re.compile(
     r"^#?\s*(?P<symbol>[A-Za-z0-9._]+)\s+"
     r"(?P<side>BUY|SELL)"
     r"(?:\s+PLAN)?\s+"
-    r"@?(?P<low>\d+(?:\.\d+)?)\s*[-_]\s*@?(?P<high>\d+(?:\.\d+)?)\s*$",
+    r"@?(?P<first>\d+(?:\.\d+)?)"
+    r"(?:\s*[-_]\s*@?(?P<second>\d+(?:\.\d+)?))?\s*$",
     re.IGNORECASE,
 )
 _TP = re.compile(
@@ -85,14 +86,16 @@ def parse_signal(text: str) -> Optional[ParsedSignal]:
         _LOG.info("Header matched but missing TP/SL: tps=%s sl=%s", tps, sl)
         return None
 
-    low = float(header.group("low"))
-    high = float(header.group("high"))
+    first = float(header.group("first"))
+    second_raw = header.group("second")
+    second = float(second_raw) if second_raw else first
     return ParsedSignal(
         symbol=header.group("symbol").upper(),
         side=Side.BUY if header.group("side").upper() == "BUY" else Side.SELL,
-        zone_low=min(low, high),
-        zone_high=max(low, high),
+        zone_low=min(first, second),
+        zone_high=max(first, second),
         tps=tuple(tps),
         sl=sl,
         raw_text=text.strip(),
+        entry=first,
     )

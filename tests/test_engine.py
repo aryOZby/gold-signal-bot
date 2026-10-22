@@ -156,6 +156,40 @@ def test_one_signal_at_a_time(tmp_path: Path):
     assert len(db.active_signals()) == 1
 
 
+def test_profit_kings_allows_concurrent_signals(tmp_path: Path):
+    engine, db, broker = _engine(tmp_path)
+    engine.cfg.max_concurrent_signals = 0
+    kings = GroupConfig(
+        "profit_kings", -1003, 0.01, magic=260910,
+        skip_first_tps=0, take_farthest_tps=3, breakeven_after_tp=1,
+        limit_entry=True, allow_concurrent=True,
+    )
+    engine.cfg.groups.append(kings)
+    engine._handle(_incoming(SELL, kings, 1))
+    engine._handle(_incoming(BUY, kings, 2))
+    active = [s for s in db.active_signals() if s.group_name == "profit_kings"]
+    assert len(active) == 2
+    sides = {s.side for s in active}
+    assert sides == {"SELL", "BUY"}
+    assert broker.positions(kings.magic)
+
+
+def test_profit_kings_limit_uses_first_header_price(tmp_path: Path):
+    engine, db, broker = _engine(tmp_path)
+    engine.cfg.max_concurrent_signals = 0
+    kings = GroupConfig(
+        "profit_kings", -1003, 0.01, magic=260910,
+        skip_first_tps=0, take_farthest_tps=1, breakeven_after_tp=1,
+        limit_entry=True, allow_concurrent=True,
+    )
+    engine.cfg.groups.append(kings)
+    broker.set_price("XAUUSD", 4200.0)
+    engine._handle(_incoming(SELL, kings, 9))
+    trades = [t for t in db.open_trades() if t.group_name == "profit_kings"]
+    assert trades
+    assert all(abs((t.entry_price or 0) - 4315.0) < 1e-9 for t in trades)
+
+
 def test_same_group_does_not_open_opposite_side(tmp_path: Path):
     engine, db, broker = _engine(tmp_path)
     engine.cfg.max_concurrent_signals = 0

@@ -248,6 +248,82 @@ class Mt5NativeBroker(Broker):
         msg = last.comment if last is not None else str(mt5.last_error())
         return OrderResult(False, None, None, None, retcode=retcode, message=str(msg))
 
+    def pending_order(
+        self,
+        symbol: str,
+        side: Side,
+        volume: float,
+        sl: float,
+        tp: float,
+        comment: str,
+        deviation: int,
+        magic: int,
+        price: float,
+    ) -> OrderResult:
+        if not self._ensure_connected():
+            return OrderResult(False, None, None, None, message="MT5 not connected")
+        resolved = self._prepare_symbol(symbol)
+        if resolved is None:
+            return OrderResult(False, None, None, None, message=self._describe_symbol_failure(symbol))
+        symbol = resolved
+        info = mt5.symbol_info(symbol)
+        tick = mt5.symbol_info_tick(symbol)
+        if info is None or tick is None:
+            return OrderResult(False, None, None, None, message=f"no tick for {symbol}")
+
+        entry = _normalize_price(price, info)
+        sl_n = _normalize_price(sl, info)
+        tp_n = _normalize_price(tp, info)
+        if side is Side.BUY:
+            order_type = mt5.ORDER_TYPE_BUY_LIMIT if tick.ask > entry else mt5.ORDER_TYPE_BUY_STOP
+        else:
+            order_type = mt5.ORDER_TYPE_SELL_LIMIT if tick.bid < entry else mt5.ORDER_TYPE_SELL_STOP
+
+        request_base = {
+            "action": mt5.TRADE_ACTION_PENDING,
+            "symbol": symbol,
+            "volume": float(volume),
+            "type": order_type,
+            "price": entry,
+            "sl": sl_n,
+            "tp": tp_n,
+            "deviation": deviation,
+            "magic": magic,
+            "comment": comment[:31],
+            "type_time": mt5.ORDER_TIME_GTC,
+        }
+        last = None
+        for filling in _filling_candidates(info):
+            request = dict(request_base)
+            request["type_filling"] = filling
+            result = mt5.order_send(request)
+            last = result
+            if result is None:
+                continue
+            if result.retcode == mt5.TRADE_RETCODE_DONE:
+                _LOG.info(
+                    "Pending %s %s at %s ticket=%s",
+                    "BUY" if side is Side.BUY else "SELL",
+                    "LIMIT" if order_type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT) else "STOP",
+                    entry,
+                    result.order,
+                )
+                return OrderResult(
+                    ok=True,
+                    ticket=int(result.order),
+                    fill_price=entry,
+                    fill_time=utcnow(),
+                    retcode=int(result.retcode),
+                    message=result.comment or "pending",
+                    sl=sl_n,
+                    tp=tp_n,
+                )
+            if result.retcode != mt5.TRADE_RETCODE_INVALID_FILL:
+                break
+
+        _LOG.warning("Pending order failed (%s) — falling back to market", last)
+        return self.market_order(symbol, side, volume, sl, tp, comment, deviation, magic)
+
     def modify_sl_tp(self, ticket: int, sl: Optional[float], tp: Optional[float]) -> bool:
         pos = mt5.positions_get(ticket=ticket)
         if not pos:

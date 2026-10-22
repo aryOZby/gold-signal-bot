@@ -29,6 +29,8 @@ telegram:
       take_farthest_tps: 3
       breakeven_after_tp: 1
       enabled: false
+      limit_entry: true
+      allow_concurrent: true
   admin_chat_id: 167570482
 
 trading:

@@ -332,7 +332,7 @@ class TradingEngine:
 
         self._clear_stale_active(item.group.name)
         active = self.db.active_signals()
-        if any(s.group_name == item.group.name for s in active):
+        if not item.group.allow_concurrent and any(s.group_name == item.group.name for s in active):
             rec = _new_signal(signal_id, item, symbol, SignalStatus.SKIPPED.value, "busy_group")
             self.db.insert_signal(rec)
             self._queue_report(item.group.name, received)
@@ -441,10 +441,11 @@ class TradingEngine:
         self.db.insert_signal(rec)
 
         magic = item.group.magic or self.cfg.magic_number
+        entry_mode = f"limit@{item.parsed.entry}" if item.group.limit_entry else "market"
         _LOG.info(
-            "Signal %s %s %s SL=%s legs=%s lot=%s (%s)",
+            "Signal %s %s %s SL=%s legs=%s lot=%s (%s) %s",
             signal_id, item.parsed.side.value, symbol, item.parsed.sl,
-            [f"TP{i}@{p}" for i, p in tradable], lot, risk.lot_mode,
+            [f"TP{i}@{p}" for i, p in tradable], lot, risk.lot_mode, entry_mode,
         )
         # --- EXECUTE FIRST, persist after each fill ---
         any_ok = False
@@ -453,16 +454,29 @@ class TradingEngine:
             result = None
             attempts = self.cfg.order_retries + 1
             for _ in range(attempts):
-                result = self.broker.market_order(
-                    symbol=symbol,
-                    side=item.parsed.side,
-                    volume=lot,
-                    sl=item.parsed.sl,
-                    tp=tp_price,
-                    comment=comment,
-                    deviation=self.cfg.deviation,
-                    magic=magic,
-                )
+                if item.group.limit_entry and item.parsed.entry:
+                    result = self.broker.pending_order(
+                        symbol=symbol,
+                        side=item.parsed.side,
+                        volume=lot,
+                        sl=item.parsed.sl,
+                        tp=tp_price,
+                        comment=comment,
+                        deviation=self.cfg.deviation,
+                        magic=magic,
+                        price=item.parsed.entry,
+                    )
+                else:
+                    result = self.broker.market_order(
+                        symbol=symbol,
+                        side=item.parsed.side,
+                        volume=lot,
+                        sl=item.parsed.sl,
+                        tp=tp_price,
+                        comment=comment,
+                        deviation=self.cfg.deviation,
+                        magic=magic,
+                    )
                 if result.ok:
                     break
             if result and result.ok:

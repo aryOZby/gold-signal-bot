@@ -125,6 +125,8 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
                 take_farthest_tps=None if farthest is None else max(0, int(farthest)),
                 breakeven_after_tp=None if be_after is None else max(1, int(be_after)),
                 enabled=bool(item.get("enabled", True)),
+                limit_entry=bool(item.get("limit_entry", name == "profit_kings")),
+                allow_concurrent=bool(item.get("allow_concurrent", name == "profit_kings")),
             )
         )
     if len(groups) < 1:

@@ -42,6 +42,8 @@ class ParsedSignal:
     tps: tuple[float, ...]
     sl: float
     raw_text: str
+    # המספר הראשון בשורת הכותרת, בדיוק כמו שנכתב (כולל עשרוני).
+    entry: float = 0.0
 
     @property
     def tp_count(self) -> int:
@@ -61,6 +63,10 @@ class GroupConfig:
     breakeven_after_tp: Optional[int] = None
     # false = ממשיכים להאזין ולתעד, אבל לא נכנסים לעסקאות מהקבוצה הזו.
     enabled: bool = True
+    # true = כניסה בפקודת לימיט/סטופ במחיר השורה הראשונה, לא מרקט.
+    limit_entry: bool = False
+    # true = אפשר כמה איתותים פתוחים במקביל באותה קבוצה.
+    allow_concurrent: bool = False
 
 
 @dataclass

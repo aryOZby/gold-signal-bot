@@ -123,3 +123,23 @@ def test_ignore_non_signal():
     assert parse_signal("good morning") is None
     assert parse_signal("#XAUUSD SELL 4315-4318\nTP 4312") is None  # no SL
     assert parse_signal("XAUUSD SELL PLAN @4365_4368\ntp @4349") is None  # no SL
+
+
+def test_header_keeps_first_number_as_entry():
+    sig = parse_signal(SELL)
+    assert sig is not None
+    assert sig.entry == 4315.0
+    buy = parse_signal(BUY)
+    assert buy is not None
+    assert buy.entry == 4349.0
+
+
+def test_header_accepts_single_full_price():
+    text = "#XAUUSD SELL 4176.25\nTP 4170.10\nSL 4182.40\n"
+    sig = parse_signal(text)
+    assert sig is not None
+    assert sig.entry == 4176.25
+    assert sig.zone_low == 4176.25
+    assert sig.zone_high == 4176.25
+    assert sig.tps == (4170.10,)
+    assert sig.sl == 4182.40

@@ -71,6 +71,21 @@ class DryRunBroker(Broker):
             tp=tp,
         )
 
+    def pending_order(
+        self,
+        symbol: str,
+        side: Side,
+        volume: float,
+        sl: float,
+        tp: float,
+        comment: str,
+        deviation: int,
+        magic: int,
+        price: float,
+    ) -> OrderResult:
+        self._last_price[symbol] = float(price)
+        return self.market_order(symbol, side, volume, sl, tp, comment, deviation, magic)
+
     def modify_sl_tp(self, ticket: int, sl: Optional[float], tp: Optional[float]) -> bool:
         with self._lock:
             pos = self._positions.get(ticket)

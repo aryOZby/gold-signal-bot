@@ -29,6 +29,21 @@ class Broker(ABC):
     ) -> OrderResult:
         raise NotImplementedError
 
+    def pending_order(
+        self,
+        symbol: str,
+        side: Side,
+        volume: float,
+        sl: float,
+        tp: float,
+        comment: str,
+        deviation: int,
+        magic: int,
+        price: float,
+    ) -> OrderResult:
+        """Limit/stop at `price`. Default: market fill (tests / backends without pending)."""
+        return self.market_order(symbol, side, volume, sl, tp, comment, deviation, magic)
+
     @abstractmethod
     def modify_sl_tp(self, ticket: int, sl: Optional[float], tp: Optional[float]) -> bool:
         raise NotImplementedError
